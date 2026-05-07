@@ -1,9 +1,15 @@
 import unittest
+from pathlib import Path
+import tempfile
 
 import numpy as np
 
 from pinhole_calib import PinholeIntrinsics
-from pinhole_calib.separable_solver import SeparableSharedIntrinsicSolver
+from pinhole_calib.separable_solver import (
+    SeparableSharedIntrinsicSolver,
+    load_colmap_correspondences_by_image,
+    load_colmap_tracks_by_image,
+)
 
 
 class SeparableSolverTest(unittest.TestCase):
@@ -55,6 +61,69 @@ class SeparableSolverTest(unittest.TestCase):
         self.assertAlmostEqual(result.intrinsics.cx, target.cx, places=5)
         self.assertAlmostEqual(result.intrinsics.cy, target.cy, places=5)
         self.assertLess(result.residual_rms, 1e-6)
+
+    def test_load_colmap_correspondences_by_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            txt_dir = Path(tmp_dir)
+            (txt_dir / "images.txt").write_text(
+                "\n".join(
+                    [
+                        "# Image list with two lines of data per image:",
+                        "1 1 0 0 0 0 0 0 1 image1.jpg",
+                        "10 20 1",
+                        "2 1 0 0 0 1 0 0 1 image2.jpg",
+                        "12 20 1",
+                    ]
+                )
+                + "\n"
+            )
+            (txt_dir / "points3D.txt").write_text(
+                "\n".join(
+                    [
+                        "# 3D point list with one line of data per point:",
+                        "1 5 0 10 0 0 0 0 1 0 2 0",
+                    ]
+                )
+                + "\n"
+            )
+
+            observations = load_colmap_tracks_by_image(txt_dir)
+            correspondences = load_colmap_correspondences_by_image(txt_dir)
+
+        self.assertIn("image1.jpg", observations)
+        self.assertIn("image2.jpg", observations)
+        np.testing.assert_array_equal(
+            observations["image1.jpg"].translation,
+            np.array([0.0, 0.0, 0.0], dtype=np.float64),
+        )
+        np.testing.assert_array_equal(
+            observations["image2.jpg"].translation,
+            np.array([1.0, 0.0, 0.0], dtype=np.float64),
+        )
+        np.testing.assert_array_equal(
+            correspondences["image1.jpg"].source_uv,
+            np.array([[10.0, 20.0]], dtype=np.float64),
+        )
+        np.testing.assert_array_equal(
+            correspondences["image1.jpg"].target_image_ids,
+            np.array([2], dtype=np.int64),
+        )
+        np.testing.assert_array_equal(
+            correspondences["image1.jpg"].target_uv,
+            np.array([[12.0, 20.0]], dtype=np.float64),
+        )
+        np.testing.assert_array_equal(
+            correspondences["image2.jpg"].source_uv,
+            np.array([[12.0, 20.0]], dtype=np.float64),
+        )
+        np.testing.assert_array_equal(
+            correspondences["image2.jpg"].target_image_ids,
+            np.array([1], dtype=np.int64),
+        )
+        np.testing.assert_array_equal(
+            correspondences["image2.jpg"].target_uv,
+            np.array([[10.0, 20.0]], dtype=np.float64),
+        )
 
 
 if __name__ == "__main__":

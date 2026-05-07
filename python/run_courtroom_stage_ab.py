@@ -12,12 +12,14 @@ import numpy as np
 import torch
 
 from pinhole_calib import (
+    ColmapImageCorrespondences,
     ColmapImageObservations,
     ColmapSharedIntrinsicEstimator,
     GatingConfig,
     MiscalibrationPriorAdapter,
     PinholeIntrinsics,
     SeparableSharedIntrinsicSolver,
+    load_colmap_correspondences_by_image,
     load_colmap_tracks,
     load_colmap_tracks_by_image,
 )
@@ -211,8 +213,11 @@ def main() -> None:
         min_model_size=min_model_size,
     )
     base_shared = base_estimate.intrinsics
-    track_observations = load_colmap_tracks_by_image((run_dir / "base_colmap" / "txt"))
-    camera_xyz, observed_uv, _ = load_colmap_tracks((run_dir / "base_colmap" / "txt"))
+    colmap_txt_dir = run_dir / "base_colmap" / "txt"
+    track_observations = load_colmap_tracks_by_image(colmap_txt_dir)
+    image_correspondences = load_colmap_correspondences_by_image(colmap_txt_dir)
+    observations_by_id = {obs.image_id: obs for obs in track_observations.values()}
+    camera_xyz, observed_uv, _ = load_colmap_tracks(colmap_txt_dir)
     shifted_uv = observed_uv.copy()
     shifted_uv[:, 0] += delta_cx
     shifted_uv[:, 1] += delta_cy
@@ -260,8 +265,20 @@ def main() -> None:
             image_tracks = ColmapImageObservations(
                 image_id=-1,
                 image_name=path.name,
+                rotation=np.eye(3, dtype=np.float64),
+                translation=np.zeros((3,), dtype=np.float64),
                 camera_xyz=np.zeros((0, 3), dtype=np.float64),
                 observed_uv=np.zeros((0, 2), dtype=np.float64),
+                point_ids=np.zeros((0,), dtype=np.int64),
+            )
+        image_corr = image_correspondences.get(path.name)
+        if image_corr is None:
+            image_corr = ColmapImageCorrespondences(
+                image_id=image_tracks.image_id,
+                image_name=path.name,
+                source_uv=np.zeros((0, 2), dtype=np.float64),
+                target_image_ids=np.zeros((0,), dtype=np.int64),
+                target_uv=np.zeros((0, 2), dtype=np.float64),
                 point_ids=np.zeros((0,), dtype=np.int64),
             )
         corrected = adapter.correct_priors(
@@ -271,16 +288,51 @@ def main() -> None:
             pointmap=shifted_out["points"],
         )
         mask = (baseline["mask"] > 0) & (shifted_out["mask"] > 0) & (rerun_out["mask"] > 0)
+        shifted_source_uv = image_corr.source_uv.copy()
+        if shifted_source_uv.size > 0:
+            shifted_source_uv[:, 0] += delta_cx
+            shifted_source_uv[:, 1] += delta_cy
         shifted_observed_uv = image_tracks.observed_uv.copy()
         if shifted_observed_uv.size > 0:
             shifted_observed_uv[:, 0] += delta_cx
             shifted_observed_uv[:, 1] += delta_cy
-        geometry_residual = adapter.pointmap_correspondence_residual(
-            corrected.pointmap,
-            observed_uv=shifted_observed_uv,
-            camera_xyz=image_tracks.camera_xyz,
-            mask=shifted_out["mask"] > 0,
-        )
+        source_uv = []
+        target_rotations = []
+        target_translations = []
+        target_uv = []
+        for observed_source_uv, target_image_id, observed_target_uv in zip(
+            shifted_source_uv,
+            image_corr.target_image_ids,
+            image_corr.target_uv,
+        ):
+            target_image = observations_by_id.get(int(target_image_id))
+            if target_image is None:
+                continue
+            source_uv.append(observed_source_uv)
+            target_rotations.append(target_image.rotation)
+            target_translations.append(target_image.translation)
+            target_uv.append(observed_target_uv)
+        if target_rotations:
+            geometry_residual = adapter.pointmap_multiview_correspondence_residual(
+                corrected.pointmap,
+                source_uv=np.asarray(source_uv, dtype=np.float64),
+                target_uv=np.asarray(target_uv, dtype=np.float64),
+                source_rotation=image_tracks.rotation,
+                source_translation=image_tracks.translation,
+                target_rotations=np.asarray(target_rotations, dtype=np.float64),
+                target_translations=np.asarray(target_translations, dtype=np.float64),
+                target_intrinsics=base_shared,
+                mask=shifted_out["mask"] > 0,
+            )
+            correspondence_count = len(target_rotations)
+        else:
+            geometry_residual = adapter.pointmap_correspondence_residual(
+                corrected.pointmap,
+                observed_uv=shifted_observed_uv,
+                camera_xyz=image_tracks.camera_xyz,
+                mask=shifted_out["mask"] > 0,
+            )
+            correspondence_count = int(image_tracks.camera_xyz.shape[0])
         signals = adapter.build_default_signals(
             current_intrinsics=estimated,
             geometry_residual=geometry_residual,
@@ -290,7 +342,7 @@ def main() -> None:
             FrameMetrics(
                 image_name=path.name,
                 correspondence_residual=float(geometry_residual.item()),
-                correspondence_count=int(image_tracks.camera_xyz.shape[0]),
+                correspondence_count=correspondence_count,
                 shifted_point_rmse=masked_point_rmse(shifted_out["points"], baseline["points"], mask),
                 corrected_point_rmse=masked_point_rmse(corrected.pointmap, baseline["points"], mask),
                 rerun_point_rmse=masked_point_rmse(rerun_out["points"], baseline["points"], mask),

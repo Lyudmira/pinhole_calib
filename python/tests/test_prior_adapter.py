@@ -159,6 +159,39 @@ class PriorAdapterTest(unittest.TestCase):
         )
         self.assertGreater(wrong_residual.item(), 0.1)
 
+    def test_pointmap_multiview_correspondence_residual_uses_target_reprojection(self) -> None:
+        pointmap = torch.tensor(
+            [
+                [[0.0, 0.0, 2.0], [0.0, 0.0, 2.0]],
+                [[0.0, 0.0, 2.0], [0.0, 0.0, 2.0]],
+            ],
+            dtype=torch.float32,
+        )
+        intrinsics = PinholeIntrinsics(focal_x=4.0, focal_y=4.0, cx=1.0, cy=1.0)
+        residual = self.adapter.pointmap_multiview_correspondence_residual(
+            pointmap,
+            source_uv=torch.tensor([[0.5, 0.5]], dtype=torch.float32),
+            target_uv=torch.tensor([[3.0, 1.0]], dtype=torch.float32),
+            source_rotation=torch.eye(3, dtype=torch.float32),
+            source_translation=torch.zeros(3, dtype=torch.float32),
+            target_rotations=torch.eye(3, dtype=torch.float32).unsqueeze(0),
+            target_translations=torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float32),
+            target_intrinsics=intrinsics,
+        )
+        self.assertLess(residual.item(), 1e-6)
+
+        wrong_residual = self.adapter.pointmap_multiview_correspondence_residual(
+            pointmap,
+            source_uv=torch.tensor([[0.5, 0.5]], dtype=torch.float32),
+            target_uv=torch.tensor([[2.0, 1.0]], dtype=torch.float32),
+            source_rotation=torch.eye(3, dtype=torch.float32),
+            source_translation=torch.zeros(3, dtype=torch.float32),
+            target_rotations=torch.eye(3, dtype=torch.float32).unsqueeze(0),
+            target_translations=torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float32),
+            target_intrinsics=intrinsics,
+        )
+        self.assertGreater(wrong_residual.item(), 0.1)
+
 
 if __name__ == "__main__":
     unittest.main()

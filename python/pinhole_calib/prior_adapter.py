@@ -355,6 +355,114 @@ class MiscalibrationPriorAdapter:
         diff = (sampled_points - camera_xyz_t) / depth_scale
         return torch.sqrt(torch.mean(torch.sum(diff * diff, dim=-1)))
 
+    def pointmap_multiview_correspondence_residual(
+        self,
+        pointmap: Tensor,
+        *,
+        source_uv: Tensor | t.Any,
+        target_uv: Tensor | t.Any,
+        source_rotation: Tensor | t.Any,
+        source_translation: Tensor | t.Any,
+        target_rotations: Tensor | t.Any,
+        target_translations: Tensor | t.Any,
+        target_intrinsics: PinholeIntrinsics,
+        mask: Tensor | None = None,
+    ) -> Tensor:
+        if pointmap.ndim != 3 or pointmap.shape[-1] != 3:
+            raise ValueError(f"Expected pointmap [H, W, 3], got {pointmap.shape}")
+
+        source_uv_t = torch.as_tensor(source_uv, device=pointmap.device, dtype=pointmap.dtype)
+        target_uv_t = torch.as_tensor(target_uv, device=pointmap.device, dtype=pointmap.dtype)
+        source_rotation_t = torch.as_tensor(
+            source_rotation, device=pointmap.device, dtype=pointmap.dtype
+        )
+        source_translation_t = torch.as_tensor(
+            source_translation, device=pointmap.device, dtype=pointmap.dtype
+        )
+        target_rotations_t = torch.as_tensor(
+            target_rotations, device=pointmap.device, dtype=pointmap.dtype
+        )
+        target_translations_t = torch.as_tensor(
+            target_translations, device=pointmap.device, dtype=pointmap.dtype
+        )
+
+        if source_uv_t.ndim != 2 or source_uv_t.shape[-1] != 2:
+            raise ValueError(f"Expected source_uv [N, 2], got {source_uv_t.shape}")
+        if target_uv_t.ndim != 2 or target_uv_t.shape[-1] != 2:
+            raise ValueError(f"Expected target_uv [N, 2], got {target_uv_t.shape}")
+        if source_uv_t.shape[0] != target_uv_t.shape[0]:
+            raise ValueError("source_uv and target_uv must have the same number of rows")
+        if target_rotations_t.ndim != 3 or target_rotations_t.shape[-2:] != (3, 3):
+            raise ValueError(
+                f"Expected target_rotations [N, 3, 3], got {target_rotations_t.shape}"
+            )
+        if target_translations_t.ndim != 2 or target_translations_t.shape[-1] != 3:
+            raise ValueError(
+                f"Expected target_translations [N, 3], got {target_translations_t.shape}"
+            )
+        if target_rotations_t.shape[0] != source_uv_t.shape[0]:
+            raise ValueError("target_rotations and source_uv must have the same number of rows")
+        if target_translations_t.shape[0] != source_uv_t.shape[0]:
+            raise ValueError("target_translations and source_uv must have the same number of rows")
+        if source_rotation_t.shape != (3, 3):
+            raise ValueError(f"Expected source_rotation [3, 3], got {source_rotation_t.shape}")
+        if source_translation_t.shape != (3,):
+            raise ValueError(f"Expected source_translation [3], got {source_translation_t.shape}")
+        if source_uv_t.shape[0] == 0:
+            return torch.full((), float("inf"), device=pointmap.device, dtype=pointmap.dtype)
+
+        height, width = pointmap.shape[:2]
+        valid = torch.isfinite(source_uv_t).all(dim=-1) & torch.isfinite(target_uv_t).all(dim=-1)
+        valid = valid & torch.isfinite(target_rotations_t).all(dim=(-1, -2))
+        valid = valid & torch.isfinite(target_translations_t).all(dim=-1)
+        valid = valid & (source_uv_t[:, 0] >= 0.0) & (source_uv_t[:, 0] < width)
+        valid = valid & (source_uv_t[:, 1] >= 0.0) & (source_uv_t[:, 1] < height)
+        if not torch.any(valid):
+            return torch.full((), float("inf"), device=pointmap.device, dtype=pointmap.dtype)
+
+        source_uv_t = source_uv_t[valid]
+        target_uv_t = target_uv_t[valid]
+        target_rotations_t = target_rotations_t[valid]
+        target_translations_t = target_translations_t[valid]
+
+        sampled_points = self._sample_hwc_at_uv(pointmap, source_uv_t, mode="bilinear")
+        valid = torch.isfinite(sampled_points).all(dim=-1) & (sampled_points[:, 2] > 1e-6)
+        if mask is not None:
+            valid = valid & self._sample_mask_at_uv(mask, source_uv_t)
+        if not torch.any(valid):
+            return torch.full((), float("inf"), device=pointmap.device, dtype=pointmap.dtype)
+
+        sampled_points = sampled_points[valid]
+        target_uv_t = target_uv_t[valid]
+        target_rotations_t = target_rotations_t[valid]
+        target_translations_t = target_translations_t[valid]
+
+        world_points = torch.einsum(
+            "ij,nj->ni", source_rotation_t.transpose(0, 1), sampled_points - source_translation_t
+        )
+        target_camera_points = torch.einsum("nij,nj->ni", target_rotations_t, world_points)
+        target_camera_points = target_camera_points + target_translations_t
+        valid = torch.isfinite(target_camera_points).all(dim=-1) & (target_camera_points[:, 2] > 1e-6)
+        if not torch.any(valid):
+            return torch.full((), float("inf"), device=pointmap.device, dtype=pointmap.dtype)
+
+        target_camera_points = target_camera_points[valid]
+        target_uv_t = target_uv_t[valid]
+        fx = torch.as_tensor(
+            target_intrinsics.focal_x, device=pointmap.device, dtype=pointmap.dtype
+        )
+        fy = torch.as_tensor(
+            target_intrinsics.focal_y, device=pointmap.device, dtype=pointmap.dtype
+        )
+        cx = torch.as_tensor(target_intrinsics.cx, device=pointmap.device, dtype=pointmap.dtype)
+        cy = torch.as_tensor(target_intrinsics.cy, device=pointmap.device, dtype=pointmap.dtype)
+        pred_u = fx * target_camera_points[:, 0] / target_camera_points[:, 2] + cx
+        pred_v = fy * target_camera_points[:, 1] / target_camera_points[:, 2] + cy
+        predicted_uv = torch.stack([pred_u, pred_v], dim=-1)
+        focal_scale = torch.sqrt(fx * fy).clamp_min(1e-6)
+        diff = (predicted_uv - target_uv_t) / focal_scale
+        return torch.sqrt(torch.mean(torch.sum(diff * diff, dim=-1)))
+
     def gate(
         self,
         *,
