@@ -1,5 +1,7 @@
 # Integration with private `gaussian-splatting-dc`
 
+For a **local scratchpad** with IDE-friendly absolute paths into an optional `from_dc/gaussian-splatting-dc` mirror, see [from_dc/guide.md](../from_dc/guide.md).
+
 This repo imports **`dc_reality`** from a separate checkout of **gaussian-splatting-dc** (same codebase as the internal dConstruct Gaussian splatting project). That dependency is **private** and must not be vendored in the public `pinhole_calib` tree.
 
 ## Setup

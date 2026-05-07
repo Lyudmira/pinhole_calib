@@ -9,4 +9,4 @@ so that it contains a top-level `dc_reality/` package, **or** install that repo 
 - `pip install -e /path/to/gaussian-splatting-dc`, or
 - `export PINHOLE_CALIB_GAUSSIAN_SPLATTING_DC=/path/to/gaussian-splatting-dc`
 
-See the root [README.md](../README.md) and [docs/from_dc_integration.md](../docs/from_dc_integration.md).
+See the root [README.md](../README.md), [docs/from_dc_integration.md](../docs/from_dc_integration.md), and [guide.md](guide.md) (absolute-path notes for local mirrors).
