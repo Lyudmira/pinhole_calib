@@ -111,6 +111,48 @@ def pick_images(image_dir: Path, *, num_images: int, seed: int) -> list[Path]:
     return images[start : start + num_images]
 
 
+_LEGACY_RUN_SUBDIRS = ("base_colmap", "base_images", "shifted_images")
+
+
+def _legacy_dirs_present(work_root: Path) -> bool:
+    return any((work_root / name).exists() for name in _LEGACY_RUN_SUBDIRS)
+
+
+def _max_numeric_subdir(work_root: Path) -> int:
+    m = 0
+    for p in work_root.iterdir():
+        if p.is_dir() and p.name.isdigit():
+            m = max(m, int(p.name))
+    return m
+
+
+def migrate_legacy_flat_work_root(work_root: Path) -> None:
+    """Move a pre-numbering layout (base_* at work_root) into a numbered folder.
+
+    If ``work_root/1`` already exists, orphan legacy dirs go to ``max_index + 1``.
+    """
+    if not _legacy_dirs_present(work_root):
+        return
+    dest = work_root / "1"
+    if dest.exists():
+        dest = work_root / str(_max_numeric_subdir(work_root) + 1)
+    dest.mkdir(parents=True, exist_ok=True)
+    for name in _LEGACY_RUN_SUBDIRS:
+        src = work_root / name
+        if src.exists():
+            shutil.move(str(src), str(dest / name))
+
+
+def allocate_next_run_dir(work_root: Path) -> Path:
+    """Return ``work_root / N`` with ``N`` one past the highest existing numeric subdirectory."""
+    work_root.mkdir(parents=True, exist_ok=True)
+    migrate_legacy_flat_work_root(work_root)
+    n = _max_numeric_subdir(work_root) + 1
+    run_dir = work_root / str(n)
+    run_dir.mkdir(parents=False)
+    return run_dir
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--num-images", type=int, default=6)
@@ -138,10 +180,9 @@ def main() -> None:
     min_model_size = max(3, min(8, args.num_images - 1))
 
     work_root = args.work_root
-    if work_root.exists():
-        shutil.rmtree(work_root)
-    base_image_dir = work_root / "base_images"
-    shifted_image_dir = work_root / "shifted_images"
+    run_dir = allocate_next_run_dir(work_root)
+    base_image_dir = run_dir / "base_images"
+    shifted_image_dir = run_dir / "shifted_images"
     base_image_dir.mkdir(parents=True, exist_ok=True)
     shifted_image_dir.mkdir(parents=True, exist_ok=True)
 
@@ -162,11 +203,11 @@ def main() -> None:
     colmap = ColmapSharedIntrinsicEstimator(colmap_binary=COLMAP_BINARY)
     base_estimate = colmap.fit(
         image_dir=base_image_dir,
-        work_dir=work_root / "base_colmap",
+        work_dir=run_dir / "base_colmap",
         min_model_size=min_model_size,
     )
     base_shared = base_estimate.intrinsics
-    camera_xyz, observed_uv, _ = load_colmap_tracks((work_root / "base_colmap" / "txt"))
+    camera_xyz, observed_uv, _ = load_colmap_tracks((run_dir / "base_colmap" / "txt"))
     shifted_uv = observed_uv.copy()
     shifted_uv[:, 0] += delta_cx
     shifted_uv[:, 1] += delta_cy
@@ -235,6 +276,9 @@ def main() -> None:
         )
 
     summary = {
+        "work_root": str(work_root.resolve()),
+        "run_dir": str(run_dir.resolve()),
+        "run_index": int(run_dir.name),
         "image_paths": [str(p) for p in image_paths],
         "seed": args.seed,
         "delta_cx": delta_cx,
@@ -278,6 +322,7 @@ def main() -> None:
     args.output.write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary["aggregate_metrics"], indent=2))
     print(json.dumps(summary["estimation_error"], indent=2))
+    print(f"run artifacts: {run_dir}")
     print(f"saved to {args.output}")
 
 
