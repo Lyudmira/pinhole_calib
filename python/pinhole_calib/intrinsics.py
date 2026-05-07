@@ -84,6 +84,18 @@ class PinholeIntrinsics:
             ]
         )
 
+    def delta_theta_unitless(self, assumed: "PinholeIntrinsics") -> Tensor:
+        current = self.matrix()
+        assumed_matrix = assumed.matrix(device=current.device, dtype=current.dtype)
+        return torch.stack(
+            [
+                (current[0, 0] - assumed_matrix[0, 0]) / assumed_matrix[0, 0],
+                (current[1, 1] - assumed_matrix[1, 1]) / assumed_matrix[1, 1],
+                (current[0, 2] - assumed_matrix[0, 2]) / assumed_matrix[0, 0],
+                (current[1, 2] - assumed_matrix[1, 2]) / assumed_matrix[1, 1],
+            ]
+        )
+
     def normalized_principal_point_shift(self, assumed: "PinholeIntrinsics") -> Tensor:
         current = self.matrix()
         assumed_matrix = assumed.matrix(device=current.device, dtype=current.dtype)

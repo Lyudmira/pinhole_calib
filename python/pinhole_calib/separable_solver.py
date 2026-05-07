@@ -22,6 +22,15 @@ class SeparableSolveResult:
     num_observations: int
 
 
+@dataclass(slots=True)
+class ColmapImageObservations:
+    image_id: int
+    image_name: str
+    camera_xyz: np.ndarray
+    observed_uv: np.ndarray
+    point_ids: np.ndarray
+
+
 def _qvec_to_rotmat(qvec: np.ndarray) -> np.ndarray:
     w, x, y, z = qvec
     return np.array(
@@ -34,7 +43,7 @@ def _qvec_to_rotmat(qvec: np.ndarray) -> np.ndarray:
     )
 
 
-def load_colmap_tracks(txt_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _load_points3d(txt_dir: Path) -> dict[int, np.ndarray]:
     points3d = {}
     with open(txt_dir / "points3D.txt") as f:
         for line in f:
@@ -45,12 +54,15 @@ def load_colmap_tracks(txt_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarra
             point_id = int(parts[0])
             xyz = np.array(list(map(float, parts[1:4])), dtype=np.float64)
             points3d[point_id] = xyz
+    return points3d
 
-    poses = {}
-    observations_xyz = []
-    observations_uv = []
+
+def load_colmap_tracks_by_image(txt_dir: Path) -> dict[str, ColmapImageObservations]:
+    points3d = _load_points3d(txt_dir)
+    observations_by_image: dict[str, ColmapImageObservations] = {}
     with open(txt_dir / "images.txt") as f:
         lines = [line.rstrip("\n") for line in f]
+
     i = 0
     while i < len(lines):
         line = lines[i].strip()
@@ -61,31 +73,62 @@ def load_colmap_tracks(txt_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarra
         image_id = int(parts[0])
         qvec = np.array(list(map(float, parts[1:5])), dtype=np.float64)
         tvec = np.array(list(map(float, parts[5:8])), dtype=np.float64)
-        poses[image_id] = (_qvec_to_rotmat(qvec), tvec)
-        if i >= len(lines):
-            break
-        points_line = lines[i].strip()
-        i += 1
-        if not points_line:
+        image_name = " ".join(parts[9:])
+        rotation = _qvec_to_rotmat(qvec)
+
+        camera_xyz = []
+        observed_uv = []
+        point_ids = []
+
+        if i < len(lines):
+            points_line = lines[i].strip()
+            i += 1
+            if points_line:
+                vals = points_line.split()
+                triples = [vals[j : j + 3] for j in range(0, len(vals), 3)]
+                for x_s, y_s, pid_s in triples:
+                    point_id = int(pid_s)
+                    if point_id < 0 or point_id not in points3d:
+                        continue
+                    xyz_world = points3d[point_id]
+                    xyz_cam = rotation @ xyz_world + tvec
+                    if xyz_cam[2] <= 1e-6:
+                        continue
+                    camera_xyz.append(xyz_cam)
+                    observed_uv.append([float(x_s), float(y_s)])
+                    point_ids.append(point_id)
+
+        observations_by_image[image_name] = ColmapImageObservations(
+            image_id=image_id,
+            image_name=image_name,
+            camera_xyz=np.asarray(camera_xyz, dtype=np.float64),
+            observed_uv=np.asarray(observed_uv, dtype=np.float64),
+            point_ids=np.asarray(point_ids, dtype=np.int64),
+        )
+
+    return observations_by_image
+
+
+def load_colmap_tracks(txt_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    observations_xyz = []
+    observations_uv = []
+    counts = []
+    for image_observations in load_colmap_tracks_by_image(txt_dir).values():
+        if image_observations.camera_xyz.size == 0:
             continue
-        vals = points_line.split()
-        triples = [vals[j : j + 3] for j in range(0, len(vals), 3)]
-        R, t = poses[image_id]
-        for x_s, y_s, pid_s in triples:
-            pid = int(pid_s)
-            if pid < 0 or pid not in points3d:
-                continue
-            xyz_world = points3d[pid]
-            xyz_cam = R @ xyz_world + t
-            if xyz_cam[2] <= 1e-6:
-                continue
-            observations_xyz.append(xyz_cam)
-            observations_uv.append([float(x_s), float(y_s)])
+        observations_xyz.append(image_observations.camera_xyz)
+        observations_uv.append(image_observations.observed_uv)
+        counts.append(int(image_observations.camera_xyz.shape[0]))
+
+    if not observations_xyz:
+        empty_xyz = np.zeros((0, 3), dtype=np.float64)
+        empty_uv = np.zeros((0, 2), dtype=np.float64)
+        return empty_xyz, empty_uv, np.zeros((0,), dtype=np.int64)
 
     return (
-        np.asarray(observations_xyz, dtype=np.float64),
-        np.asarray(observations_uv, dtype=np.float64),
-        np.asarray([len(observations_uv)], dtype=np.int64),
+        np.concatenate(observations_xyz, axis=0).astype(np.float64),
+        np.concatenate(observations_uv, axis=0).astype(np.float64),
+        np.asarray(counts, dtype=np.int64),
     )
 
 

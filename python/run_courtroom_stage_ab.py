@@ -12,12 +12,14 @@ import numpy as np
 import torch
 
 from pinhole_calib import (
+    ColmapImageObservations,
     ColmapSharedIntrinsicEstimator,
     GatingConfig,
     MiscalibrationPriorAdapter,
     PinholeIntrinsics,
     SeparableSharedIntrinsicSolver,
     load_colmap_tracks,
+    load_colmap_tracks_by_image,
 )
 from pinhole_calib.image_ops import (
     recenter_image_from_estimated_intrinsics,
@@ -33,6 +35,8 @@ COLMAP_BINARY = Path("/data/users/mia/conda_envs/colmap410build/bin/colmap")
 @dataclass
 class FrameMetrics:
     image_name: str
+    correspondence_residual: float
+    correspondence_count: int
     shifted_point_rmse: float
     corrected_point_rmse: float
     rerun_point_rmse: float
@@ -207,6 +211,7 @@ def main() -> None:
         min_model_size=min_model_size,
     )
     base_shared = base_estimate.intrinsics
+    track_observations = load_colmap_tracks_by_image((run_dir / "base_colmap" / "txt"))
     camera_xyz, observed_uv, _ = load_colmap_tracks((run_dir / "base_colmap" / "txt"))
     shifted_uv = observed_uv.copy()
     shifted_uv[:, 0] += delta_cx
@@ -240,12 +245,25 @@ def main() -> None:
             estimated_cy=estimated.cy,
             target_cx=base_shared.cx,
             target_cy=base_shared.cy,
+            estimated_focal_x=estimated.focal_x,
+            estimated_focal_y=estimated.focal_y,
+            target_focal_x=base_shared.focal_x,
+            target_focal_y=base_shared.focal_y,
         )
         recentered_images.append(recentered)
         rerun_outputs.append(run_moge(model, recentered, device=args.device, use_fp16=args.use_fp16))
 
     frame_metrics: list[FrameMetrics] = []
     for path, baseline, shifted_out, rerun_out in zip(image_paths, baseline_outputs, shifted_outputs, rerun_outputs):
+        image_tracks = track_observations.get(path.name)
+        if image_tracks is None:
+            image_tracks = ColmapImageObservations(
+                image_id=-1,
+                image_name=path.name,
+                camera_xyz=np.zeros((0, 3), dtype=np.float64),
+                observed_uv=np.zeros((0, 2), dtype=np.float64),
+                point_ids=np.zeros((0,), dtype=np.int64),
+            )
         corrected = adapter.correct_priors(
             current_intrinsics=estimated,
             depth=shifted_out["depth"],
@@ -253,15 +271,26 @@ def main() -> None:
             pointmap=shifted_out["points"],
         )
         mask = (baseline["mask"] > 0) & (shifted_out["mask"] > 0) & (rerun_out["mask"] > 0)
+        shifted_observed_uv = image_tracks.observed_uv.copy()
+        if shifted_observed_uv.size > 0:
+            shifted_observed_uv[:, 0] += delta_cx
+            shifted_observed_uv[:, 1] += delta_cy
+        geometry_residual = adapter.pointmap_correspondence_residual(
+            corrected.pointmap,
+            observed_uv=shifted_observed_uv,
+            camera_xyz=image_tracks.camera_xyz,
+            mask=shifted_out["mask"] > 0,
+        )
         signals = adapter.build_default_signals(
             current_intrinsics=estimated,
-            geometry_residual=separable.residual_rms,
-            bias_alignment=0.0,
+            geometry_residual=geometry_residual,
         )
         gate = adapter.gate(signals=signals, config=GatingConfig(tau=2.0))
         frame_metrics.append(
             FrameMetrics(
                 image_name=path.name,
+                correspondence_residual=float(geometry_residual.item()),
+                correspondence_count=int(image_tracks.camera_xyz.shape[0]),
                 shifted_point_rmse=masked_point_rmse(shifted_out["points"], baseline["points"], mask),
                 corrected_point_rmse=masked_point_rmse(corrected.pointmap, baseline["points"], mask),
                 rerun_point_rmse=masked_point_rmse(rerun_out["points"], baseline["points"], mask),
@@ -307,6 +336,7 @@ def main() -> None:
                 "shifted_point_rmse",
                 "corrected_point_rmse",
                 "rerun_point_rmse",
+                "correspondence_residual",
                 "shifted_depth_mae",
                 "corrected_depth_mae",
                 "rerun_depth_mae",

@@ -14,6 +14,7 @@ from .se3 import se3_exp
 ensure_from_dc_on_path()
 
 from dc_reality.splatting.utils.pixel_grid import (  # noqa: E402
+    normalize_uv_n2_for_grid_sample,
     normalize_uv_hw2_for_grid_sample,
     pixel_grid_hw2,
 )
@@ -54,15 +55,38 @@ class CorrectedPriors:
 class GatingSignals:
     intrinsics_error: Tensor
     geometry_residual: Tensor
-    bias_alignment: Tensor
 
 
-@dataclass(slots=True)
+@dataclass(init=False, slots=True)
 class GatingConfig:
-    tau: float = 1.0
-    intrinsics_weight: float = 1.0
-    geometry_weight: float = 1.0
-    bias_weight: float = 1.0
+    tau: float
+    eta_k: float
+    eta_r: float
+
+    def __init__(
+        self,
+        tau: float = 1.0,
+        eta_k: float = 1.0,
+        eta_r: float = 1.0,
+        *,
+        intrinsics_weight: float | None = None,
+        geometry_weight: float | None = None,
+    ) -> None:
+        if intrinsics_weight is not None:
+            eta_k = intrinsics_weight
+        if geometry_weight is not None:
+            eta_r = geometry_weight
+        self.tau = float(tau)
+        self.eta_k = float(eta_k)
+        self.eta_r = float(eta_r)
+
+    @property
+    def intrinsics_weight(self) -> float:
+        return self.eta_k
+
+    @property
+    def geometry_weight(self) -> float:
+        return self.eta_r
 
 
 class MiscalibrationPriorAdapter:
@@ -222,6 +246,12 @@ class MiscalibrationPriorAdapter:
         target = target_intrinsics.matrix(
             device=pointmap.device, dtype=pointmap.dtype
         )
+        estimated_intrinsics = PinholeIntrinsics(
+            focal_x=float(result["focal_x"]),
+            focal_y=float(result["focal_y"]),
+            cx=float(result["cx"]),
+            cy=float(result["cy"]),
+        )
         estimated = torch.tensor(
             [
                 result["focal_x"],
@@ -242,8 +272,88 @@ class MiscalibrationPriorAdapter:
             device=pointmap.device,
             dtype=pointmap.dtype,
         )
-        result["target_l2"] = torch.linalg.norm(estimated - target_vec)
+        result["target_l2"] = float(torch.linalg.norm(estimated - target_vec).item())
+        result["target_delta_theta_unitless_l2"] = float(
+            torch.linalg.norm(
+                estimated_intrinsics.delta_theta_unitless(target_intrinsics)
+            ).item()
+        )
         return result
+
+    def pointmap_geometry_residual(
+        self,
+        pointmap: Tensor,
+        *,
+        target_intrinsics: PinholeIntrinsics,
+        mask: Tensor | None = None,
+    ) -> Tensor:
+        consistency = self.pointmap_intrinsics_consistency(
+            pointmap,
+            mask=mask,
+            target_intrinsics=target_intrinsics,
+        )
+        return torch.as_tensor(
+            consistency["target_delta_theta_unitless_l2"],
+            device=pointmap.device,
+            dtype=pointmap.dtype,
+        )
+
+    def pointmap_correspondence_residual(
+        self,
+        pointmap: Tensor,
+        *,
+        observed_uv: Tensor | t.Any,
+        camera_xyz: Tensor | t.Any,
+        mask: Tensor | None = None,
+    ) -> Tensor:
+        if pointmap.ndim != 3 or pointmap.shape[-1] != 3:
+            raise ValueError(f"Expected pointmap [H, W, 3], got {pointmap.shape}")
+
+        observed_uv_t = torch.as_tensor(
+            observed_uv,
+            device=pointmap.device,
+            dtype=pointmap.dtype,
+        )
+        camera_xyz_t = torch.as_tensor(
+            camera_xyz,
+            device=pointmap.device,
+            dtype=pointmap.dtype,
+        )
+        if observed_uv_t.ndim != 2 or observed_uv_t.shape[-1] != 2:
+            raise ValueError(f"Expected observed_uv [N, 2], got {observed_uv_t.shape}")
+        if camera_xyz_t.ndim != 2 or camera_xyz_t.shape[-1] != 3:
+            raise ValueError(f"Expected camera_xyz [N, 3], got {camera_xyz_t.shape}")
+        if observed_uv_t.shape[0] != camera_xyz_t.shape[0]:
+            raise ValueError("observed_uv and camera_xyz must have the same number of rows")
+        if observed_uv_t.shape[0] == 0:
+            return torch.full((), float("inf"), device=pointmap.device, dtype=pointmap.dtype)
+
+        height, width = pointmap.shape[:2]
+        valid = torch.isfinite(observed_uv_t).all(dim=-1) & torch.isfinite(camera_xyz_t).all(dim=-1)
+        valid = valid & (camera_xyz_t[:, 2] > 1e-6)
+        valid = valid & (observed_uv_t[:, 0] >= 0.0) & (observed_uv_t[:, 0] < width)
+        valid = valid & (observed_uv_t[:, 1] >= 0.0) & (observed_uv_t[:, 1] < height)
+        if not torch.any(valid):
+            return torch.full((), float("inf"), device=pointmap.device, dtype=pointmap.dtype)
+
+        observed_uv_t = observed_uv_t[valid]
+        camera_xyz_t = camera_xyz_t[valid]
+
+        sampled_points = self._sample_hwc_at_uv(pointmap, observed_uv_t, mode="bilinear")
+        valid = torch.isfinite(sampled_points).all(dim=-1)
+
+        if mask is not None:
+            sampled_mask = self._sample_mask_at_uv(mask, observed_uv_t)
+            valid = valid & sampled_mask
+
+        if not torch.any(valid):
+            return torch.full((), float("inf"), device=pointmap.device, dtype=pointmap.dtype)
+
+        sampled_points = sampled_points[valid]
+        camera_xyz_t = camera_xyz_t[valid]
+        depth_scale = camera_xyz_t[:, 2].abs().median().clamp_min(1e-6)
+        diff = (sampled_points - camera_xyz_t) / depth_scale
+        return torch.sqrt(torch.mean(torch.sum(diff * diff, dim=-1)))
 
     def gate(
         self,
@@ -254,9 +364,8 @@ class MiscalibrationPriorAdapter:
         config = config or GatingConfig()
         logits = (
             config.tau
-            - config.intrinsics_weight * signals.intrinsics_error
-            - config.geometry_weight * signals.geometry_residual
-            - config.bias_weight * signals.bias_alignment
+            - config.eta_k * signals.intrinsics_error
+            - config.eta_r * signals.geometry_residual
         )
         return torch.sigmoid(logits)
 
@@ -265,19 +374,13 @@ class MiscalibrationPriorAdapter:
         *,
         current_intrinsics: PinholeIntrinsics,
         geometry_residual: Tensor | float = 0.0,
-        bias_alignment: Tensor | float = 0.0,
     ) -> GatingSignals:
-        delta_theta = self.correction_state(current_intrinsics)["delta_theta"]
+        delta_theta = current_intrinsics.delta_theta_unitless(self.assumed_intrinsics)
         intrinsics_error = torch.linalg.norm(delta_theta)
         return GatingSignals(
             intrinsics_error=intrinsics_error,
             geometry_residual=torch.as_tensor(
                 geometry_residual,
-                device=intrinsics_error.device,
-                dtype=intrinsics_error.dtype,
-            ),
-            bias_alignment=torch.as_tensor(
-                bias_alignment,
                 device=intrinsics_error.device,
                 dtype=intrinsics_error.dtype,
             ),
@@ -349,3 +452,28 @@ class MiscalibrationPriorAdapter:
         if depth.ndim == 3 and depth.shape[0] == 1:
             return depth.squeeze(0).unsqueeze(-1)
         raise ValueError(f"Unsupported depth shape for pointmap conversion: {depth.shape}")
+
+    def _sample_hwc_at_uv(self, image: Tensor, uv: Tensor, *, mode: str) -> Tensor:
+        if image.ndim != 3:
+            raise ValueError(f"Expected image [H, W, C], got {image.shape}")
+        height, width, _ = image.shape
+        grid = normalize_uv_n2_for_grid_sample(
+            uv,
+            width=width,
+            height=height,
+            align_corners=self.align_corners,
+        ).view(1, -1, 1, 2)
+        sampled = F.grid_sample(
+            image.permute(2, 0, 1).unsqueeze(0),
+            grid,
+            mode=mode,
+            padding_mode=self.padding_mode,
+            align_corners=self.align_corners,
+        )
+        return sampled.squeeze(0).squeeze(-1).transpose(0, 1)
+
+    def _sample_mask_at_uv(self, mask: Tensor, uv: Tensor) -> Tensor:
+        if mask.ndim != 2:
+            raise ValueError(f"Expected mask [H, W], got {mask.shape}")
+        sampled = self._sample_hwc_at_uv(mask.unsqueeze(-1).to(dtype=uv.dtype), uv, mode="nearest")
+        return sampled.squeeze(-1) > 0.5

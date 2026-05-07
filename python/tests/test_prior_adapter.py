@@ -93,18 +93,71 @@ class PriorAdapterTest(unittest.TestCase):
         small = self.adapter.build_default_signals(
             current_intrinsics=self.current,
             geometry_residual=0.1,
-            bias_alignment=0.1,
         )
         large = self.adapter.build_default_signals(
             current_intrinsics=PinholeIntrinsics(400.0, 420.0, 360.0, 210.0),
             geometry_residual=1.0,
-            bias_alignment=1.0,
         )
         config = GatingConfig(tau=2.0)
         self.assertGreater(
             self.adapter.gate(signals=small, config=config).item(),
             self.adapter.gate(signals=large, config=config).item(),
         )
+
+    def test_default_gating_uses_unitless_intrinsics_error(self) -> None:
+        signals = self.adapter.build_default_signals(current_intrinsics=self.current)
+        expected = torch.linalg.norm(
+            torch.tensor([0.0, 0.0, 12.0 / 400.0, -6.0 / 420.0], dtype=torch.float32)
+        )
+        self.assertAlmostEqual(signals.intrinsics_error.item(), expected.item(), places=6)
+
+    def test_gate_matches_paper_deterministic_formula(self) -> None:
+        signals = self.adapter.build_default_signals(
+            current_intrinsics=self.current,
+            geometry_residual=0.4,
+        )
+        config = GatingConfig(tau=1.0, eta_k=2.0, eta_r=0.5)
+        expected = torch.sigmoid(
+            torch.tensor(1.0)
+            - 2.0 * signals.intrinsics_error
+            - 0.5 * signals.geometry_residual
+        )
+        self.assertAlmostEqual(
+            self.adapter.gate(signals=signals, config=config).item(),
+            expected.item(),
+            places=6,
+        )
+
+    def test_gating_config_accepts_legacy_weight_names(self) -> None:
+        config = GatingConfig(tau=1.0, intrinsics_weight=2.0, geometry_weight=0.5)
+        self.assertEqual(config.eta_k, 2.0)
+        self.assertEqual(config.eta_r, 0.5)
+
+    def test_pointmap_correspondence_residual_uses_track_geometry(self) -> None:
+        pointmap = torch.tensor(
+            [
+                [[1.0, 0.0, 4.0], [2.0, 0.0, 4.0]],
+                [[1.0, 1.0, 4.0], [2.0, 1.0, 4.0]],
+            ],
+            dtype=torch.float32,
+        )
+        observed_uv = torch.tensor([[0.5, 0.5], [1.5, 1.5]], dtype=torch.float32)
+        camera_xyz = torch.tensor([[1.0, 0.0, 4.0], [2.0, 1.0, 4.0]], dtype=torch.float32)
+        residual = self.adapter.pointmap_correspondence_residual(
+            pointmap,
+            observed_uv=observed_uv,
+            camera_xyz=camera_xyz,
+        )
+        self.assertLess(residual.item(), 1e-6)
+
+        wrong_camera_xyz = camera_xyz.clone()
+        wrong_camera_xyz[1, 0] += 1.0
+        wrong_residual = self.adapter.pointmap_correspondence_residual(
+            pointmap,
+            observed_uv=observed_uv,
+            camera_xyz=wrong_camera_xyz,
+        )
+        self.assertGreater(wrong_residual.item(), 0.1)
 
 
 if __name__ == "__main__":
