@@ -20,6 +20,11 @@ class SeparableSolveResult:
     intrinsics: PinholeIntrinsics
     residual_rms: float
     num_observations: int
+    focal_x_std: float
+    focal_y_std: float
+    cx_std: float
+    cy_std: float
+    normal_matrix_condition: float
 
 
 @dataclass(slots=True)
@@ -292,10 +297,19 @@ class SeparableSharedIntrinsicSolver:
             max_nfev=200,
         )
         fx, fy, cx, cy = result.x
+        jt_j = result.jac.T @ result.jac
+        covariance = np.linalg.pinv(jt_j)
+        residual_rms = float(math.sqrt(np.mean(result.fun ** 2)))
+        std = np.sqrt(np.clip(np.diag(covariance), a_min=0.0, a_max=None))
         return SeparableSolveResult(
             intrinsics=PinholeIntrinsics(focal_x=float(fx), focal_y=float(fy), cx=float(cx), cy=float(cy)),
-            residual_rms=float(math.sqrt(np.mean(result.fun ** 2))),
+            residual_rms=residual_rms,
             num_observations=int(len(observed_uv)),
+            focal_x_std=float(std[0]),
+            focal_y_std=float(std[1]),
+            cx_std=float(std[2]),
+            cy_std=float(std[3]),
+            normal_matrix_condition=float(np.linalg.cond(jt_j)),
         )
 
     @staticmethod
