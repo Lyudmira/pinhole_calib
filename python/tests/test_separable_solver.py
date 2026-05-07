@@ -61,6 +61,9 @@ class SeparableSolverTest(unittest.TestCase):
         self.assertAlmostEqual(result.intrinsics.cx, target.cx, places=5)
         self.assertAlmostEqual(result.intrinsics.cy, target.cy, places=5)
         self.assertLess(result.residual_rms, 1e-6)
+        self.assertTrue(np.isfinite(result.cx_std))
+        self.assertTrue(np.isfinite(result.cy_std))
+        self.assertGreater(result.normal_matrix_condition, 0.0)
 
     def test_load_colmap_correspondences_by_image(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -52,9 +52,51 @@ class CorrectedPriors:
 
 
 @dataclass(slots=True)
+class DepthAffineCorrection:
+    scale: float
+    bias: float
+
+
+@dataclass(slots=True)
 class GatingSignals:
     intrinsics_error: Tensor
     geometry_residual: Tensor
+
+
+@dataclass(slots=True)
+class ChannelGatingSignals:
+    intrinsics_error: Tensor
+    pointmap_geometry_residual: Tensor
+    pose_geometry_residual: Tensor
+    depth_geometry_residual: Tensor
+    normal_geometry_residual: Tensor
+
+
+@dataclass(slots=True)
+class ChannelGates:
+    pointmap: Tensor
+    pose: Tensor
+    depth: Tensor
+    normals: Tensor
+
+
+@dataclass(slots=True)
+class PriorStateConfig:
+    corrected_intrinsics_error_max: float = 0.04
+    corrected_principal_point_std_px_max: float = 2.0
+    filtered_intrinsics_error_max: float = 0.10
+    filtered_principal_point_std_px_max: float = 10.0
+    filtered_schur_condition_max: float = 1e14
+
+
+@dataclass(slots=True)
+class PriorStateAssessment:
+    state: t.Literal["corrected", "debiased", "filtered"]
+    intrinsics_error: float
+    principal_point_std_px: float
+    principal_point_rotation_sensitivity: float
+    schur_condition_number: float
+    rerun_recommended: bool
 
 
 @dataclass(init=False, slots=True)
@@ -87,6 +129,41 @@ class GatingConfig:
     @property
     def geometry_weight(self) -> float:
         return self.eta_r
+
+
+@dataclass(init=False, slots=True)
+class ChannelGatingConfig:
+    tau_pointmap: float
+    tau_pose: float
+    tau_depth: float
+    tau_normal: float
+    eta_k: float
+    eta_pointmap_r: float
+    eta_pose_r: float
+    eta_depth_r: float
+    eta_normal_r: float
+
+    def __init__(
+        self,
+        tau_pointmap: float = 1.0,
+        tau_pose: float = 1.0,
+        tau_depth: float = 1.0,
+        tau_normal: float = 1.0,
+        eta_k: float = 1.0,
+        eta_pointmap_r: float = 1.0,
+        eta_pose_r: float = 1.0,
+        eta_depth_r: float = 1.0,
+        eta_normal_r: float = 1.0,
+    ) -> None:
+        self.tau_pointmap = float(tau_pointmap)
+        self.tau_pose = float(tau_pose)
+        self.tau_depth = float(tau_depth)
+        self.tau_normal = float(tau_normal)
+        self.eta_k = float(eta_k)
+        self.eta_pointmap_r = float(eta_pointmap_r)
+        self.eta_pose_r = float(eta_pose_r)
+        self.eta_depth_r = float(eta_depth_r)
+        self.eta_normal_r = float(eta_normal_r)
 
 
 class MiscalibrationPriorAdapter:
@@ -165,6 +242,7 @@ class MiscalibrationPriorAdapter:
         *,
         current_intrinsics: PinholeIntrinsics,
         mode: str = "bilinear",
+        affine_correction: DepthAffineCorrection | None = None,
     ) -> Tensor:
         depth_nchw, squeezed = self._to_nchw(depth)
         _, _, height, width = depth_nchw.shape
@@ -190,6 +268,8 @@ class MiscalibrationPriorAdapter:
             padding_mode=self.padding_mode,
             align_corners=self.align_corners,
         )
+        if affine_correction is not None:
+            corrected = corrected * float(affine_correction.scale) + float(affine_correction.bias)
         return self._restore_depth_shape(corrected, squeezed)
 
     def correct_normals(
@@ -218,8 +298,13 @@ class MiscalibrationPriorAdapter:
         depth: Tensor,
         *,
         current_intrinsics: PinholeIntrinsics,
+        affine_correction: DepthAffineCorrection | None = None,
     ) -> Tensor:
-        corrected_depth = self.correct_depth(depth, current_intrinsics=current_intrinsics)
+        corrected_depth = self.correct_depth(
+            depth,
+            current_intrinsics=current_intrinsics,
+            affine_correction=affine_correction,
+        )
         depth_hw1 = self._to_hw1(corrected_depth)
         return _unproject_grid_points(
             depths=depth_hw1,
@@ -477,6 +562,91 @@ class MiscalibrationPriorAdapter:
         )
         return torch.sigmoid(logits)
 
+    def build_channel_signals(
+        self,
+        *,
+        current_intrinsics: PinholeIntrinsics,
+        pointmap_geometry_residual: Tensor | float = 0.0,
+        pose_geometry_residual: Tensor | float = 0.0,
+        depth_geometry_residual: Tensor | float = 0.0,
+        normal_geometry_residual: Tensor | float = 0.0,
+    ) -> ChannelGatingSignals:
+        intrinsics_error = torch.linalg.norm(
+            current_intrinsics.delta_theta_unitless(self.assumed_intrinsics)
+        )
+        return ChannelGatingSignals(
+            intrinsics_error=intrinsics_error,
+            pointmap_geometry_residual=torch.as_tensor(
+                pointmap_geometry_residual,
+                device=intrinsics_error.device,
+                dtype=intrinsics_error.dtype,
+            ),
+            pose_geometry_residual=torch.as_tensor(
+                pose_geometry_residual,
+                device=intrinsics_error.device,
+                dtype=intrinsics_error.dtype,
+            ),
+            depth_geometry_residual=torch.as_tensor(
+                depth_geometry_residual,
+                device=intrinsics_error.device,
+                dtype=intrinsics_error.dtype,
+            ),
+            normal_geometry_residual=torch.as_tensor(
+                normal_geometry_residual,
+                device=intrinsics_error.device,
+                dtype=intrinsics_error.dtype,
+            ),
+        )
+
+    def gate_channels(
+        self,
+        *,
+        signals: ChannelGatingSignals,
+        config: ChannelGatingConfig | None = None,
+    ) -> ChannelGates:
+        config = config or ChannelGatingConfig()
+        intrinsics_term = config.eta_k * signals.intrinsics_error
+        return ChannelGates(
+            pointmap=torch.sigmoid(
+                config.tau_pointmap
+                - intrinsics_term
+                - config.eta_pointmap_r * signals.pointmap_geometry_residual
+            ),
+            pose=torch.sigmoid(config.tau_pose - intrinsics_term - config.eta_pose_r * signals.pose_geometry_residual),
+            depth=torch.sigmoid(config.tau_depth - intrinsics_term - config.eta_depth_r * signals.depth_geometry_residual),
+            normals=torch.sigmoid(config.tau_normal - intrinsics_term - config.eta_normal_r * signals.normal_geometry_residual),
+        )
+
+    def normal_pointmap_consistency_residual(
+        self,
+        normals: Tensor,
+        *,
+        pointmap: Tensor,
+        mask: Tensor | None = None,
+    ) -> Tensor:
+        if normals.ndim != 3 or normals.shape[-1] != 3:
+            raise ValueError(f"Expected normals [H, W, 3], got {normals.shape}")
+        if pointmap.ndim != 3 or pointmap.shape[-1] != 3:
+            raise ValueError(f"Expected pointmap [H, W, 3], got {pointmap.shape}")
+        if normals.shape[:2] != pointmap.shape[:2]:
+            raise ValueError("normals and pointmap must share image dimensions")
+        if pointmap.shape[0] < 3 or pointmap.shape[1] < 3:
+            return torch.full((), float("inf"), device=pointmap.device, dtype=pointmap.dtype)
+
+        dx = pointmap[1:-1, 2:, :] - pointmap[1:-1, :-2, :]
+        dy = pointmap[2:, 1:-1, :] - pointmap[:-2, 1:-1, :]
+        predicted_normals = F.normalize(torch.cross(dx, dy, dim=-1), dim=-1)
+        observed_normals = F.normalize(normals[1:-1, 1:-1, :], dim=-1)
+        valid = torch.isfinite(predicted_normals).all(dim=-1) & torch.isfinite(observed_normals).all(dim=-1)
+        valid = valid & (torch.linalg.norm(dx, dim=-1) > 1e-6) & (torch.linalg.norm(dy, dim=-1) > 1e-6)
+        if mask is not None:
+            valid = valid & mask[1:-1, 1:-1].bool()
+        if not torch.any(valid):
+            return torch.full((), float("inf"), device=pointmap.device, dtype=pointmap.dtype)
+
+        cos = (predicted_normals[valid] * observed_normals[valid]).sum(dim=-1).abs().clamp(0.0, 1.0)
+        return torch.mean(torch.acos(cos))
+
     def build_default_signals(
         self,
         *,
@@ -494,6 +664,56 @@ class MiscalibrationPriorAdapter:
             ),
         )
 
+    def classify_prior_state(
+        self,
+        *,
+        current_intrinsics: PinholeIntrinsics,
+        principal_point_std_px: float | None = None,
+        principal_point_rotation_sensitivity: float | None = None,
+        schur_condition_number: float | None = None,
+        rerun_available: bool = False,
+        config: PriorStateConfig | None = None,
+    ) -> PriorStateAssessment:
+        config = config or PriorStateConfig()
+        intrinsics_error = float(
+            torch.linalg.norm(
+                current_intrinsics.delta_theta_unitless(self.assumed_intrinsics)
+            ).item()
+        )
+        principal_point_std_px = float("inf") if principal_point_std_px is None else float(principal_point_std_px)
+        principal_point_rotation_sensitivity = (
+            float("inf")
+            if principal_point_rotation_sensitivity is None
+            else float(principal_point_rotation_sensitivity)
+        )
+        schur_condition_number = (
+            float("inf") if schur_condition_number is None else float(schur_condition_number)
+        )
+
+        if (
+            intrinsics_error >= config.filtered_intrinsics_error_max
+            or principal_point_std_px >= config.filtered_principal_point_std_px_max
+            or schur_condition_number >= config.filtered_schur_condition_max
+        ):
+            state: t.Literal["corrected", "debiased", "filtered"] = "filtered"
+        elif (
+            rerun_available
+            and intrinsics_error <= config.corrected_intrinsics_error_max
+            and principal_point_std_px <= config.corrected_principal_point_std_px_max
+        ):
+            state = "corrected"
+        else:
+            state = "debiased"
+
+        return PriorStateAssessment(
+            state=state,
+            intrinsics_error=intrinsics_error,
+            principal_point_std_px=principal_point_std_px,
+            principal_point_rotation_sensitivity=principal_point_rotation_sensitivity,
+            schur_condition_number=schur_condition_number,
+            rerun_recommended=(state == "corrected" and rerun_available),
+        )
+
     def correct_priors(
         self,
         *,
@@ -502,6 +722,7 @@ class MiscalibrationPriorAdapter:
         pose_type: t.Literal["world_to_camera", "camera_to_world"] = "world_to_camera",
         pose_response_matrix: Tensor | None = None,
         depth: Tensor | None = None,
+        depth_affine_correction: DepthAffineCorrection | None = None,
         normals: Tensor | None = None,
         pointmap: Tensor | None = None,
     ) -> CorrectedPriors:
@@ -517,6 +738,7 @@ class MiscalibrationPriorAdapter:
             corrected.depth = self.correct_depth(
                 depth,
                 current_intrinsics=current_intrinsics,
+                affine_correction=depth_affine_correction,
             )
         if normals is not None:
             corrected.normals = self.correct_normals(
@@ -529,6 +751,29 @@ class MiscalibrationPriorAdapter:
                 current_intrinsics=current_intrinsics,
             )
         return corrected
+
+    def fit_depth_affine(
+        self,
+        *,
+        source_depth: Tensor,
+        target_depth: Tensor,
+        mask: Tensor | None = None,
+    ) -> DepthAffineCorrection:
+        source = self._to_hw1(source_depth).squeeze(-1)
+        target = self._to_hw1(target_depth).squeeze(-1)
+        valid = torch.isfinite(source) & torch.isfinite(target)
+        if mask is not None:
+            valid = valid & mask.bool()
+        if not torch.any(valid):
+            return DepthAffineCorrection(scale=1.0, bias=0.0)
+        x = source[valid].reshape(-1)
+        y = target[valid].reshape(-1)
+        if x.numel() == 1:
+            return DepthAffineCorrection(scale=1.0, bias=float((y - x).item()))
+        ones = torch.ones_like(x)
+        design = torch.stack([x, ones], dim=-1)
+        params = torch.linalg.lstsq(design, y.unsqueeze(-1)).solution.squeeze(-1)
+        return DepthAffineCorrection(scale=float(params[0].item()), bias=float(params[1].item()))
 
     @staticmethod
     def _to_nchw(depth: Tensor) -> tuple[Tensor, bool]:

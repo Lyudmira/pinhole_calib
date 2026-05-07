@@ -12,16 +12,25 @@ import numpy as np
 import torch
 
 from pinhole_calib import (
+    ChannelGatingConfig,
     ColmapImageCorrespondences,
     ColmapImageObservations,
     ColmapSharedIntrinsicEstimator,
     GatingConfig,
+    JointFramePriors,
+    JointIntrinsicProblem,
+    JointSharedIntrinsicOptimizer,
     MiscalibrationPriorAdapter,
     PinholeIntrinsics,
+    PriorStateConfig,
     SeparableSharedIntrinsicSolver,
+    SharedKBundleAdjuster,
+    compute_shared_k_schur_response,
     load_colmap_correspondences_by_image,
+    load_colmap_local_ba_problem,
     load_colmap_tracks,
     load_colmap_tracks_by_image,
+    principal_point_stability_metrics,
 )
 from pinhole_calib.image_ops import (
     recenter_image_from_estimated_intrinsics,
@@ -38,6 +47,8 @@ COLMAP_BINARY = Path("/data/users/mia/conda_envs/colmap410build/bin/colmap")
 class FrameMetrics:
     image_name: str
     correspondence_residual: float
+    depth_geometry_residual: float
+    normal_geometry_residual: float
     correspondence_count: int
     shifted_point_rmse: float
     corrected_point_rmse: float
@@ -49,6 +60,9 @@ class FrameMetrics:
     corrected_normal_deg: float
     rerun_normal_deg: float
     gate: float
+    pointmap_gate: float
+    depth_gate: float
+    normal_gate: float
 
 
 def import_moge():
@@ -106,6 +120,36 @@ def masked_normal_angle_deg(a: torch.Tensor, b: torch.Tensor, mask: torch.Tensor
     cos = (a[mask] * b[mask]).sum(dim=-1).clamp(-1.0, 1.0)
     ang = torch.rad2deg(torch.acos(cos))
     return float(ang.mean().item())
+
+
+def selected_metrics_for_mode(frame_metrics: list[FrameMetrics], *, mode: str) -> dict[str, float] | None:
+    if mode == "corrected":
+        prefix = "corrected"
+    elif mode == "rerun":
+        prefix = "rerun"
+    else:
+        return None
+    return {
+        "point_rmse": float(np.mean([getattr(m, f"{prefix}_point_rmse") for m in frame_metrics])),
+        "depth_mae": float(np.mean([getattr(m, f"{prefix}_depth_mae") for m in frame_metrics])),
+        "normal_deg": float(np.mean([getattr(m, f"{prefix}_normal_deg") for m in frame_metrics])),
+    }
+
+
+def intrinsics_error_norm(current: PinholeIntrinsics, target: PinholeIntrinsics) -> float:
+    return float(
+        np.linalg.norm(
+            np.array(
+                [
+                    float(current.focal_x) - float(target.focal_x),
+                    float(current.focal_y) - float(target.focal_y),
+                    float(current.cx) - float(target.cx),
+                    float(current.cy) - float(target.cy),
+                ],
+                dtype=np.float64,
+            )
+        )
+    )
 
 
 def pick_images(image_dir: Path, *, num_images: int, seed: int) -> list[Path]:
@@ -224,6 +268,9 @@ def main() -> None:
     )
     base_shared = base_estimate.intrinsics
     colmap_txt_dir = run_dir / "base_colmap" / "txt"
+    local_ba_problem = load_colmap_local_ba_problem(colmap_txt_dir).with_observation_offset(
+        np.array([delta_cx, delta_cy], dtype=np.float64)
+    )
     track_observations = load_colmap_tracks_by_image(colmap_txt_dir)
     image_correspondences = load_colmap_correspondences_by_image(colmap_txt_dir)
     observations_by_id = {obs.image_id: obs for obs in track_observations.values()}
@@ -242,6 +289,19 @@ def main() -> None:
         observed_uv=shifted_uv[valid],
         init_intrinsics=base_shared,
     )
+    ba_result = SharedKBundleAdjuster(anchor_image_index=0, max_iterations=10).fit(
+        problem=local_ba_problem,
+        init_intrinsics=separable.intrinsics,
+    )
+    schur_response = compute_shared_k_schur_response(
+        local_ba_problem,
+        intrinsics=separable.intrinsics,
+        anchor_image_index=0,
+    )
+    stability_metrics = principal_point_stability_metrics(
+        schur_response,
+        intrinsics=separable.intrinsics,
+    )
     estimated = separable.intrinsics
     true_shifted = PinholeIntrinsics(
         focal_x=base_shared.focal_x,
@@ -251,6 +311,95 @@ def main() -> None:
     )
 
     adapter = MiscalibrationPriorAdapter(assumed_intrinsics=base_shared)
+    joint_frame_priors = []
+    for path, shifted_out in zip(image_paths, shifted_outputs):
+        image_tracks = track_observations.get(path.name)
+        if image_tracks is None:
+            continue
+        shifted_observed_uv = image_tracks.observed_uv.copy()
+        if shifted_observed_uv.size > 0:
+            shifted_observed_uv[:, 0] += delta_cx
+            shifted_observed_uv[:, 1] += delta_cy
+        corrected = adapter.correct_priors(
+            current_intrinsics=estimated,
+            depth=shifted_out["depth"],
+            normals=shifted_out["normal"],
+            pointmap=shifted_out["points"],
+        )
+        corrected_depth_pointmap = adapter.corrected_pointmap_from_depth(
+            shifted_out["depth"],
+            current_intrinsics=estimated,
+        )
+        pointmap_geometry_residual = adapter.pointmap_correspondence_residual(
+            corrected.pointmap,
+            observed_uv=shifted_observed_uv,
+            camera_xyz=image_tracks.camera_xyz,
+            mask=(shifted_out["mask"] > 0),
+        )
+        depth_geometry_residual = adapter.pointmap_correspondence_residual(
+            corrected_depth_pointmap,
+            observed_uv=shifted_observed_uv,
+            camera_xyz=image_tracks.camera_xyz,
+            mask=(shifted_out["mask"] > 0),
+        )
+        normal_geometry_residual = adapter.normal_pointmap_consistency_residual(
+            corrected.normals,
+            pointmap=corrected.pointmap,
+            mask=(shifted_out["mask"] > 0),
+        )
+        channel_signals = adapter.build_channel_signals(
+            current_intrinsics=estimated,
+            pointmap_geometry_residual=pointmap_geometry_residual,
+            depth_geometry_residual=depth_geometry_residual,
+            normal_geometry_residual=normal_geometry_residual,
+        )
+        channel_gates = adapter.gate_channels(
+            signals=channel_signals,
+            config=ChannelGatingConfig(tau_pointmap=2.0, tau_depth=2.0, tau_normal=2.0),
+        )
+        joint_frame_priors.append(
+            JointFramePriors(
+                image_name=path.name,
+                pointmap=shifted_out["points"],
+                depth=shifted_out["depth"],
+                normals=shifted_out["normal"],
+                mask=(shifted_out["mask"] > 0),
+                observed_uv=shifted_observed_uv,
+                camera_xyz=image_tracks.camera_xyz,
+                pointmap_weight_scale=float(channel_gates.pointmap.item()),
+                depth_weight_scale=float(channel_gates.depth.item()),
+                normal_weight_scale=float(channel_gates.normals.item()),
+            )
+        )
+    joint_result = JointSharedIntrinsicOptimizer(
+        pointmap_weight=1e-4,
+        depth_weight=5e-5,
+        normal_weight=2e-5,
+        focal_prior_weight=5.0,
+    ).fit(
+        problem=JointIntrinsicProblem(
+            camera_xyz=camera_xyz[valid],
+            observed_uv=shifted_uv[valid],
+            assumed_intrinsics=base_shared,
+            frame_priors=joint_frame_priors,
+        ),
+        init_intrinsics=separable.intrinsics,
+    )
+    prior_state = adapter.classify_prior_state(
+        current_intrinsics=estimated,
+        principal_point_std_px=max(separable.cx_std, separable.cy_std),
+        principal_point_rotation_sensitivity=stability_metrics[
+            "principal_point_rotation_sensitivity"
+        ],
+        schur_condition_number=stability_metrics["schur_condition_number"],
+        rerun_available=True,
+        config=PriorStateConfig(),
+    )
+    recommended_prior_mode = (
+        "rerun"
+        if prior_state.rerun_recommended
+        else ("corrected" if prior_state.state == "debiased" else "filtered")
+    )
 
     rerun_outputs = []
     for shifted in shifted_images:
@@ -297,6 +446,10 @@ def main() -> None:
             normals=shifted_out["normal"],
             pointmap=shifted_out["points"],
         )
+        corrected_depth_pointmap = adapter.corrected_pointmap_from_depth(
+            shifted_out["depth"],
+            current_intrinsics=estimated,
+        )
         mask = (baseline["mask"] > 0) & (shifted_out["mask"] > 0) & (rerun_out["mask"] > 0)
         shifted_source_uv = image_corr.source_uv.copy()
         if shifted_source_uv.size > 0:
@@ -334,6 +487,17 @@ def main() -> None:
                 target_intrinsics=base_shared,
                 mask=shifted_out["mask"] > 0,
             )
+            depth_geometry_residual = adapter.pointmap_multiview_correspondence_residual(
+                corrected_depth_pointmap,
+                source_uv=np.asarray(source_uv, dtype=np.float64),
+                target_uv=np.asarray(target_uv, dtype=np.float64),
+                source_rotation=image_tracks.rotation,
+                source_translation=image_tracks.translation,
+                target_rotations=np.asarray(target_rotations, dtype=np.float64),
+                target_translations=np.asarray(target_translations, dtype=np.float64),
+                target_intrinsics=base_shared,
+                mask=shifted_out["mask"] > 0,
+            )
             correspondence_count = len(target_rotations)
         else:
             geometry_residual = adapter.pointmap_correspondence_residual(
@@ -342,16 +506,39 @@ def main() -> None:
                 camera_xyz=image_tracks.camera_xyz,
                 mask=shifted_out["mask"] > 0,
             )
+            depth_geometry_residual = adapter.pointmap_correspondence_residual(
+                corrected_depth_pointmap,
+                observed_uv=shifted_observed_uv,
+                camera_xyz=image_tracks.camera_xyz,
+                mask=shifted_out["mask"] > 0,
+            )
             correspondence_count = int(image_tracks.camera_xyz.shape[0])
+        normal_geometry_residual = adapter.normal_pointmap_consistency_residual(
+            corrected.normals,
+            pointmap=corrected.pointmap,
+            mask=shifted_out["mask"] > 0,
+        )
         signals = adapter.build_default_signals(
             current_intrinsics=estimated,
             geometry_residual=geometry_residual,
         )
         gate = adapter.gate(signals=signals, config=GatingConfig(tau=2.0))
+        channel_signals = adapter.build_channel_signals(
+            current_intrinsics=estimated,
+            pointmap_geometry_residual=geometry_residual,
+            depth_geometry_residual=depth_geometry_residual,
+            normal_geometry_residual=normal_geometry_residual,
+        )
+        channel_gates = adapter.gate_channels(
+            signals=channel_signals,
+            config=ChannelGatingConfig(tau_pointmap=2.0, tau_depth=2.0, tau_normal=2.0),
+        )
         frame_metrics.append(
             FrameMetrics(
                 image_name=path.name,
                 correspondence_residual=float(geometry_residual.item()),
+                depth_geometry_residual=float(depth_geometry_residual.item()),
+                normal_geometry_residual=float(normal_geometry_residual.item()),
                 correspondence_count=correspondence_count,
                 shifted_point_rmse=masked_point_rmse(shifted_out["points"], baseline["points"], mask),
                 corrected_point_rmse=masked_point_rmse(corrected.pointmap, baseline["points"], mask),
@@ -363,6 +550,9 @@ def main() -> None:
                 corrected_normal_deg=masked_normal_angle_deg(corrected.normals, baseline["normal"], mask),
                 rerun_normal_deg=masked_normal_angle_deg(rerun_out["normal"], baseline["normal"], mask),
                 gate=float(gate.item()),
+                pointmap_gate=float(channel_gates.pointmap.item()),
+                depth_gate=float(channel_gates.depth.item()),
+                normal_gate=float(channel_gates.normals.item()),
             )
         )
 
@@ -383,7 +573,42 @@ def main() -> None:
             "type": "base_colmap_plus_separable_shared_intrinsics",
             "num_observations": separable.num_observations,
             "residual_rms": separable.residual_rms,
+            "focal_x_std": separable.focal_x_std,
+            "focal_y_std": separable.focal_y_std,
+            "cx_std": separable.cx_std,
+            "cy_std": separable.cy_std,
+            "normal_matrix_condition": separable.normal_matrix_condition,
         },
+        "shared_k_ba_probe": {
+            "ba_initial_residual_rms": ba_result.initial_residual_rms,
+            "ba_residual_rms": ba_result.residual_rms,
+            "ba_iterations": ba_result.iterations,
+            "ba_converged": ba_result.converged,
+        },
+        "joint_intrinsics_probe": {
+            "intrinsics": asdict(joint_result.intrinsics),
+            "residual_rms": joint_result.residual_rms,
+            "geometry_rms": joint_result.geometry_rms,
+            "pointmap_prior_rms": joint_result.pointmap_prior_rms,
+            "depth_prior_rms": joint_result.depth_prior_rms,
+            "normal_prior_rms": joint_result.normal_prior_rms,
+            "iterations": joint_result.iterations,
+            "converged": joint_result.converged,
+            "beats_separable_on_known_shift": (
+                intrinsics_error_norm(joint_result.intrinsics, true_shifted)
+                < intrinsics_error_norm(separable.intrinsics, true_shifted)
+            ),
+        },
+        "stability_metrics": stability_metrics,
+        "prior_state": {
+            "state": prior_state.state,
+            "intrinsics_error": prior_state.intrinsics_error,
+            "principal_point_std_px": prior_state.principal_point_std_px,
+            "principal_point_rotation_sensitivity": prior_state.principal_point_rotation_sensitivity,
+            "schur_condition_number": prior_state.schur_condition_number,
+            "rerun_recommended": prior_state.rerun_recommended,
+        },
+        "recommended_prior_mode": recommended_prior_mode,
         "estimation_error": {
             "focal_x": estimated.focal_x - true_shifted.focal_x,
             "focal_y": estimated.focal_y - true_shifted.focal_y,
@@ -406,9 +631,18 @@ def main() -> None:
                 "shifted_normal_deg",
                 "corrected_normal_deg",
                 "rerun_normal_deg",
+                "depth_geometry_residual",
+                "normal_geometry_residual",
                 "gate",
+                "pointmap_gate",
+                "depth_gate",
+                "normal_gate",
             )
         },
+        "selected_metrics": selected_metrics_for_mode(
+            frame_metrics,
+            mode=recommended_prior_mode,
+        ),
     }
 
     output_path.write_text(json.dumps(summary, indent=2))

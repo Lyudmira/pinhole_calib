@@ -2,7 +2,13 @@ import unittest
 
 import torch
 
-from pinhole_calib import GatingConfig, MiscalibrationPriorAdapter, PinholeIntrinsics
+from pinhole_calib import (
+    ChannelGatingConfig,
+    GatingConfig,
+    MiscalibrationPriorAdapter,
+    PinholeIntrinsics,
+    PriorStateConfig,
+)
 from pinhole_calib.se3 import se3_exp
 
 
@@ -191,6 +197,99 @@ class PriorAdapterTest(unittest.TestCase):
             target_intrinsics=intrinsics,
         )
         self.assertGreater(wrong_residual.item(), 0.1)
+
+    def test_prior_state_prefers_corrected_only_when_intrinsics_are_stable(self) -> None:
+        stable = self.adapter.classify_prior_state(
+            current_intrinsics=self.current,
+            principal_point_std_px=1.0,
+            principal_point_rotation_sensitivity=1e-3,
+            schur_condition_number=1e4,
+            rerun_available=True,
+        )
+        self.assertEqual(stable.state, "corrected")
+        self.assertTrue(stable.rerun_recommended)
+
+        unstable = self.adapter.classify_prior_state(
+            current_intrinsics=self.current,
+            principal_point_std_px=20.0,
+            principal_point_rotation_sensitivity=1e-3,
+            schur_condition_number=1e4,
+            rerun_available=True,
+        )
+        self.assertEqual(unstable.state, "filtered")
+
+        debiased = self.adapter.classify_prior_state(
+            current_intrinsics=self.current,
+            principal_point_std_px=4.0,
+            principal_point_rotation_sensitivity=1e-3,
+            schur_condition_number=1e4,
+            rerun_available=True,
+            config=PriorStateConfig(corrected_principal_point_std_px_max=2.0),
+        )
+        self.assertEqual(debiased.state, "debiased")
+
+    def test_depth_affine_fit_and_application(self) -> None:
+        source = torch.tensor(
+            [[1.0, 2.0], [3.0, 4.0]],
+            dtype=torch.float32,
+        )
+        target = source * 1.5 + 0.25
+        affine = self.adapter.fit_depth_affine(source_depth=source, target_depth=target)
+        self.assertAlmostEqual(affine.scale, 1.5, places=5)
+        self.assertAlmostEqual(affine.bias, 0.25, places=5)
+        corrected = self.adapter.correct_depth(
+            source,
+            current_intrinsics=self.assumed,
+            mode="nearest",
+            affine_correction=affine,
+        )
+        self.assertTrue(torch.allclose(corrected, target))
+
+    def test_normal_pointmap_consistency_residual_detects_mismatch(self) -> None:
+        x = torch.linspace(-1.0, 1.0, 5)
+        y = torch.linspace(-1.0, 1.0, 5)
+        xx, yy = torch.meshgrid(x, y, indexing="xy")
+        zz = 2.0 + 0.2 * xx - 0.1 * yy
+        pointmap = torch.stack([xx, yy, zz], dim=-1).float()
+        normal = torch.tensor([-0.2, 0.1, 1.0], dtype=torch.float32)
+        normal = torch.nn.functional.normalize(normal, dim=0)
+        normals = normal.view(1, 1, 3).expand(5, 5, 3).clone()
+
+        residual = self.adapter.normal_pointmap_consistency_residual(normals, pointmap=pointmap)
+        self.assertLess(residual.item(), 0.1)
+
+        wrong_normals = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32).view(1, 1, 3).expand(5, 5, 3)
+        wrong_residual = self.adapter.normal_pointmap_consistency_residual(
+            wrong_normals,
+            pointmap=pointmap,
+        )
+        self.assertGreater(wrong_residual.item(), 0.5)
+
+    def test_channel_gates_are_per_prior(self) -> None:
+        signals = self.adapter.build_channel_signals(
+            current_intrinsics=self.current,
+            pointmap_geometry_residual=0.1,
+            pose_geometry_residual=0.1,
+            depth_geometry_residual=1.0,
+            normal_geometry_residual=0.2,
+        )
+        gates = self.adapter.gate_channels(
+            signals=signals,
+            config=ChannelGatingConfig(
+                tau_pointmap=1.0,
+                tau_pose=1.0,
+                tau_depth=1.0,
+                tau_normal=1.0,
+                eta_k=1.0,
+                eta_pointmap_r=0.5,
+                eta_pose_r=0.5,
+                eta_depth_r=2.0,
+                eta_normal_r=0.5,
+            ),
+        )
+        self.assertGreater(gates.pointmap.item(), gates.depth.item())
+        self.assertGreater(gates.pose.item(), gates.depth.item())
+        self.assertGreater(gates.normals.item(), gates.depth.item())
 
 
 if __name__ == "__main__":
