@@ -1,0 +1,29 @@
+# Private dependency (clone separately; see README.md)
+from_dc/gaussian-splatting-dc/
+
+# Lean / Mathlib build (see lean/.gitignore)
+lean/.lake/
+lean/.elan/
+lean/build/
+lean/lake-packages/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.python-version
+
+# Local experiments
+python/tmp/
+python/output/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
