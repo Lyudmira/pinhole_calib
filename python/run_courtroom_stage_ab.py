@@ -159,6 +159,15 @@ def allocate_next_run_dir(work_root: Path) -> Path:
     return run_dir
 
 
+def allocate_output_path(output_path: Path, *, run_index: int) -> Path:
+    """Place outputs under ``output_root / run_index / filename`` to avoid overwrites."""
+    output_root = output_path.parent
+    output_root.mkdir(parents=True, exist_ok=True)
+    output_dir = output_root / str(run_index)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir / output_path.name
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--num-images", type=int, default=6)
@@ -168,7 +177,7 @@ def main() -> None:
     parser.add_argument("--use-fp16", action="store_true")
     parser.add_argument("--max-shift-frac", type=float, default=0.06)
     parser.add_argument("--output", type=Path, default=Path("/data/users/mia/current/pinhole_calib/python/output/courtroom_stage_ab.json"))
-    parser.add_argument("--work-root", type=Path, default=Path("/data/users/mia/current/pinhole_calib/python/tmp/stage_ab"))
+    parser.add_argument("--work-root", type=Path, default=Path("/data/users/mia/current/pinhole_calib/stage_ab"))
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -187,6 +196,7 @@ def main() -> None:
 
     work_root = args.work_root
     run_dir = allocate_next_run_dir(work_root)
+    output_path = allocate_output_path(args.output, run_index=int(run_dir.name))
     base_image_dir = run_dir / "base_images"
     shifted_image_dir = run_dir / "shifted_images"
     base_image_dir.mkdir(parents=True, exist_ok=True)
@@ -360,6 +370,7 @@ def main() -> None:
         "work_root": str(work_root.resolve()),
         "run_dir": str(run_dir.resolve()),
         "run_index": int(run_dir.name),
+        "output_path": str(output_path.resolve()),
         "image_paths": [str(p) for p in image_paths],
         "seed": args.seed,
         "delta_cx": delta_cx,
@@ -400,12 +411,11 @@ def main() -> None:
         },
     }
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(summary, indent=2))
+    output_path.write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary["aggregate_metrics"], indent=2))
     print(json.dumps(summary["estimation_error"], indent=2))
     print(f"run artifacts: {run_dir}")
-    print(f"saved to {args.output}")
+    print(f"saved to {output_path}")
 
 
 if __name__ == "__main__":

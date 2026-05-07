@@ -19,8 +19,8 @@ venv/
 .python-version
 
 # Local experiments
-python/tmp/
 python/output/
+stage_ab/
 
 # Editors / OS
 .idea/
