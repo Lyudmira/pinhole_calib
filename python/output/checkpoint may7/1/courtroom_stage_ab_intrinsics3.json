@@ -1,0 +1,162 @@
+{
+  "work_root": "/data/users/mia/current/pinhole_calib/stage_ab/checkpoint_may7",
+  "run_dir": "/data/users/mia/current/pinhole_calib/stage_ab/checkpoint_may7/1",
+  "run_index": 1,
+  "output_path": "/data/users/mia/current/pinhole_calib/python/output/checkpoint may7/1/courtroom_stage_ab_intrinsics3.json",
+  "image_paths": [
+    "/data/users/mia/current/instantsplat_data/TanksAndTemples_advanced/Courtroom/00166.jpg",
+    "/data/users/mia/current/instantsplat_data/TanksAndTemples_advanced/Courtroom/00167.jpg",
+    "/data/users/mia/current/instantsplat_data/TanksAndTemples_advanced/Courtroom/00168.jpg"
+  ],
+  "seed": 7,
+  "delta_cx": -40.58893098243939,
+  "delta_cy": -45.24994705938455,
+  "base_shared_intrinsics": {
+    "focal_x": 1034.168469675534,
+    "focal_y": 1262.4251018931177,
+    "cx": 1111.3845888199273,
+    "cy": 474.60907493001326
+  },
+  "true_shifted_intrinsics": {
+    "focal_x": 1034.168469675534,
+    "focal_y": 1262.4251018931177,
+    "cx": 1070.7956578374879,
+    "cy": 429.3591278706287
+  },
+  "estimated_shifted_intrinsics": {
+    "focal_x": 1034.1453361641238,
+    "focal_y": 1262.4330374589804,
+    "cx": 1070.8052154676006,
+    "cy": 429.35722193932895
+  },
+  "base_colmap_camera": {
+    "focal_x": 1034.168469675534,
+    "focal_y": 1262.4251018931177,
+    "cx": 1111.3845888199273,
+    "cy": 474.60907493001326
+  },
+  "moge_intrinsics_injected": true,
+  "stage_a_solver": {
+    "type": "base_colmap_plus_separable_shared_intrinsics",
+    "num_observations": 18,
+    "residual_rms": 0.06015384248272066,
+    "focal_x_std": 0.828367928545099,
+    "focal_y_std": 0.9688197678680478,
+    "cx_std": 0.405553052975188,
+    "cy_std": 0.24998519603061486,
+    "normal_matrix_condition": 19.9166781675959
+  },
+  "shared_k_ba_probe": {
+    "ba_initial_residual_rms": 0.06015384248272067,
+    "ba_residual_rms": 0.05386643696792585,
+    "ba_iterations": 10,
+    "ba_converged": false
+  },
+  "stability_metrics": {
+    "principal_point_response_sensitivity_px": 122.19918464628442,
+    "principal_point_rotation_sensitivity": 0.00025828337993354474,
+    "schur_condition_number": 867844807199.9061
+  },
+  "prior_state": {
+    "state": "corrected",
+    "intrinsics_error": 0.05314655601978302,
+    "principal_point_std_px": 0.405553052975188,
+    "principal_point_rotation_sensitivity": 0.00025828337993354474,
+    "schur_condition_number": 867844807199.9061,
+    "rerun_recommended": true
+  },
+  "recommended_prior_mode": "rerun",
+  "estimation_error": {
+    "focal_x": -0.023133511410151186,
+    "focal_y": 0.00793556586268096,
+    "cx": 0.009557630112794868,
+    "cy": -0.001905931299745589,
+    "delta_cx_error_vs_base": 0.009557630112709603,
+    "delta_cy_error_vs_base": -0.0019059312997598
+  },
+  "frame_metrics": [
+    {
+      "image_name": "00166.jpg",
+      "correspondence_residual": 0.4960733652114868,
+      "depth_geometry_residual": 0.33565598726272583,
+      "normal_geometry_residual": 0.42325863242149353,
+      "correspondence_count": 12,
+      "shifted_point_rmse": 1.1217705011367798,
+      "corrected_point_rmse": 1.2981295585632324,
+      "rerun_point_rmse": 0.49004611372947693,
+      "shifted_depth_mae": 0.6396491527557373,
+      "corrected_depth_mae": 0.5069430470466614,
+      "rerun_depth_mae": 0.16533969342708588,
+      "shifted_normal_deg": 23.427688598632812,
+      "corrected_normal_deg": 23.143484115600586,
+      "rerun_normal_deg": 4.639523029327393,
+      "gate": 0.8101184368133545,
+      "pointmap_gate": 0.8101184368133545,
+      "depth_gate": 0.833577573299408,
+      "normal_gate": 0.821067214012146
+    },
+    {
+      "image_name": "00167.jpg",
+      "correspondence_residual": 0.25949618220329285,
+      "depth_geometry_residual": 0.2073482722043991,
+      "normal_geometry_residual": 0.3948528468608856,
+      "correspondence_count": 12,
+      "shifted_point_rmse": 0.9189373254776001,
+      "corrected_point_rmse": 1.0815244913101196,
+      "rerun_point_rmse": 0.17097631096839905,
+      "shifted_depth_mae": 0.47330325841903687,
+      "corrected_depth_mae": 0.719689130783081,
+      "rerun_depth_mae": 0.11909761279821396,
+      "shifted_normal_deg": 24.420604705810547,
+      "corrected_normal_deg": 24.266923904418945,
+      "rerun_normal_deg": 4.976088047027588,
+      "gate": 0.843876302242279,
+      "pointmap_gate": 0.843876302242279,
+      "depth_gate": 0.850624144077301,
+      "normal_gate": 0.825202465057373
+    },
+    {
+      "image_name": "00168.jpg",
+      "correspondence_residual": 0.23458974063396454,
+      "depth_geometry_residual": 0.2514801621437073,
+      "normal_geometry_residual": 0.334434449672699,
+      "correspondence_count": 12,
+      "shifted_point_rmse": 0.5069506168365479,
+      "corrected_point_rmse": 0.6070867776870728,
+      "rerun_point_rmse": 0.12312494218349457,
+      "shifted_depth_mae": 0.24734625220298767,
+      "corrected_depth_mae": 0.40719789266586304,
+      "rerun_depth_mae": 0.086005300283432,
+      "shifted_normal_deg": 21.126121520996094,
+      "corrected_normal_deg": 21.117820739746094,
+      "rerun_normal_deg": 4.41436767578125,
+      "gate": 0.8471296429634094,
+      "pointmap_gate": 0.8471296429634094,
+      "depth_gate": 0.8449295163154602,
+      "normal_gate": 0.8337469100952148
+    }
+  ],
+  "aggregate_metrics": {
+    "shifted_point_rmse": 0.8492194811503092,
+    "corrected_point_rmse": 0.995580275853475,
+    "rerun_point_rmse": 0.26138245562712353,
+    "correspondence_residual": 0.33005309601624805,
+    "shifted_depth_mae": 0.4534328877925873,
+    "corrected_depth_mae": 0.5446100234985352,
+    "rerun_depth_mae": 0.12348086883624394,
+    "shifted_normal_deg": 22.991471608479817,
+    "corrected_normal_deg": 22.842742919921875,
+    "rerun_normal_deg": 4.67665958404541,
+    "depth_geometry_residual": 0.2648281405369441,
+    "normal_geometry_residual": 0.3841819763183594,
+    "gate": 0.833708127339681,
+    "pointmap_gate": 0.833708127339681,
+    "depth_gate": 0.8430437445640564,
+    "normal_gate": 0.8266721963882446
+  },
+  "selected_metrics": {
+    "point_rmse": 0.26138245562712353,
+    "depth_mae": 0.12348086883624394,
+    "normal_deg": 4.67665958404541
+  }
+}

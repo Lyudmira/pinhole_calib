@@ -1,0 +1,28 @@
+{
+  "shifted_point_rmse": 0.7899518261353174,
+  "corrected_point_rmse": 0.8691428204377493,
+  "rerun_point_rmse": 0.35169869164625805,
+  "correspondence_residual": Infinity,
+  "shifted_depth_mae": 0.4224475373824437,
+  "corrected_depth_mae": 0.5082904795805613,
+  "rerun_depth_mae": 0.19946144645412764,
+  "shifted_normal_deg": 20.984906832377117,
+  "corrected_normal_deg": 20.92552121480306,
+  "rerun_normal_deg": 4.2741780281066895,
+  "depth_geometry_residual": Infinity,
+  "normal_geometry_residual": 0.5415162146091461,
+  "gate": 0.45522137482961017,
+  "pointmap_gate": 0.45522137482961017,
+  "depth_gate": 0.46907079219818115,
+  "normal_gate": 0.8040879468123118
+}
+{
+  "focal_x": 0.008494067759329482,
+  "focal_y": 0.15500992449165096,
+  "cx": 0.06161022534320182,
+  "cy": 0.08611267944775136,
+  "delta_cx_error_vs_base": 0.061610225343116554,
+  "delta_cy_error_vs_base": 0.08611267944773715
+}
+run artifacts: /data/users/mia/current/pinhole_calib/stage_ab/checkpoint_may7/2
+saved to /data/users/mia/current/pinhole_calib/python/output/checkpoint may7/2/courtroom_stage_ab_intrinsics6.json
