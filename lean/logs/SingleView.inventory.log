@@ -1,0 +1,7 @@
+11:def proj (p : Vec3) : Vec2 :=
+14:def mismatchMatrix (αx αy βx βy : R) : Matrix (Fin 3) (Fin 3) R :=
+19:def normalizedMismatchRay (αx αy βx βy : R) (p : Vec3) : Vec3 :=
+22:theorem mismatchMatrix_mulVec_third (αx αy βx βy : R) (p : Vec3) :
+27:theorem proj_smul {ρ : R} (hρ : ρ ≠ 0) (p : Vec3) :
+37:theorem proj_normalizedMismatchRay (αx αy βx βy : R) {p : Vec3}
+45:theorem reprojection_exists_for_any_positive_depth

@@ -1,0 +1,18 @@
+11:def sampleCount (n : Nat) : R :=
+14:def mean {n : Nat} (a : Fin (n + 1) → R) : R :=
+17:def secondMoment {n : Nat} (a : Fin (n + 1) → R) : R :=
+20:def variance {n : Nat} (a : Fin (n + 1) → R) : R :=
+23:def centeredSquareSum {n : Nat} (a : Fin (n + 1) → R) : R :=
+26:def HxMatrix {n : Nat} (fx : R) (a : Fin (n + 1) → R) :
+32:theorem sampleCount_ne_zero (n : Nat) : sampleCount n ≠ 0 := by
+36:theorem sampleCount_pos (n : Nat) : 0 < sampleCount n := by
+40:theorem sum_eq_sampleCount_mul_mean {n : Nat} (a : Fin (n + 1) → R) :
+45:theorem sum_sq_eq_sampleCount_mul_secondMoment {n : Nat} (a : Fin (n + 1) → R) :
+50:theorem sampleCount_mul_variance_eq_centeredSquareSum {n : Nat}
+57:theorem variance_eq_centeredSquareSum_div_sampleCount {n : Nat}
+65:theorem variance_nonneg {n : Nat} (a : Fin (n + 1) → R) :
+72:theorem centeredSquareSum_eq_zero_iff_all_equal {n : Nat}
+104:theorem variance_eq_zero_iff_all_equal {n : Nat}
+117:theorem variance_pos_iff_not_all_equal {n : Nat}
+131:theorem det_HxMatrix {n : Nat} (fx : R) (a : Fin (n + 1) → R) :
+140:theorem det_HxMatrix_ne_zero_iff {n : Nat} {fx : R} (a : Fin (n + 1) → R) :

@@ -1,0 +1,53 @@
++ ELAN_HOME=/data/users/mia/current/pinhole_calib/lean/.elan
++ PATH=/data/users/mia/current/pinhole_calib/lean/.elan/bin:/usr/local/cuda/bin:/data/users/mia/bin:/usr/local/cuda/bin:/data/users/mia/bin:/data/users/mia/.codex/tmp/arg0/codex-arg0HMvgeR:/data/users/mia/.vscode-server-insiders/cli/servers/Insiders-43d0ed45492da1b1ca1738893956de429d46b5e8/server/bin/remote-cli:/usr/local/cuda/bin:/data/users/mia/bin:/usr/local/cuda/bin:/data/users/mia/.conda/bin:/usr/local/cuda/bin:/data/users/mia/.mamba/condabin:/data/users/mia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/data/users/mia/.local/share/JetBrains/Toolbox/scripts:/data/users/mia/.vscode-server-insiders/extensions/openai.chatgpt-26.506.20924-linux-x64/bin/linux-x86_64:/data/users/mia/.local/share/JetBrains/Toolbox/scripts
++ lake env lean PinholeCalib/HxMatrix.lean
+PinholeCalib/HxMatrix.lean:44:2: error: no goals to be solved
+PinholeCalib/HxMatrix.lean:50:2: error: no goals to be solved
+PinholeCalib/HxMatrix.lean:60:2: error: linarith failed to find a contradiction
+case h1.h
+n : ℕ
+a : Fin (n + 1) → R
+hsum : ∑ i : Fin (n + 1), a i = sampleCount n * mean a
+hsumSq : ∑ i : Fin (n + 1), a i ^ 2 = sampleCount n * secondMoment a
+a✝ : sampleCount n * (secondMoment a - mean a ^ 2) < ∑ i : Fin (n + 1), (a i - mean a) ^ 2
+⊢ False failed
+PinholeCalib/HxMatrix.lean:96:33: error: unsolved goals
+n : ℕ
+a : Fin (n + 1) → R
+hall : ∀ (i j : Fin (n + 1)), a i = a j
+hconst : ∀ (i : Fin (n + 1)), a i = a 0
+⊢ (↑n + 1) * a 0 / (↑n + 1) = a 0
+PinholeCalib/HxMatrix.lean:94:2: error: unsolved goals
+case mpr.h
+n : ℕ
+a : Fin (n + 1) → R
+hall : ∀ (i j : Fin (n + 1)), a i = a j
+hconst : ∀ (i : Fin (n + 1)), a i = a 0
+hmean : mean a = a 0
+i : Fin (n + 1)
+hi : i ∈ Finset.univ
+⊢ a 0 - a 0 = 0
+PinholeCalib/HxMatrix.lean:116:4: error: Failed: ?m.33781 is not the type of a function.
+PinholeCalib/HxMatrix.lean:119:10: error: unknown identifier 'div_eq_zero_of_left'
+PinholeCalib/HxMatrix.lean:116:11: error: function expected at
+  div_eq_zero_iff
+term has type
+  ?m.34042 / ?m.34043 = 0 ↔ ?m.34042 = 0 ∨ ?m.34043 = 0
+PinholeCalib/HxMatrix.lean:120:4: error: no goals to be solved
+PinholeCalib/HxMatrix.lean:134:4: error: linarith failed to find a contradiction
+case mpr.h
+n : ℕ
+a : Fin (n + 1) → R
+hnonneg : 0 ≤ variance a
+hnot : ¬∀ (i j : Fin (n + 1)), a i = a j
+hne : variance a ≠ 0
+a✝ : 0 ≥ variance a
+⊢ False failed
+PinholeCalib/HxMatrix.lean:157:31: error: tactic 'rewrite' failed, did not find instance of the pattern in the target expression
+  0 < variance ?a
+n : ℕ
+fx : R
+a : Fin (n + 1) → R
+hN : sampleCount n ≠ 0
+hscale : (sampleCount n * fx ^ 2) ^ 2 ≠ 0 ↔ fx ≠ 0
+⊢ fx ≠ 0 ∧ variance a ≠ 0 ↔ fx ≠ 0 ∧ ¬∀ (i j : Fin (n + 1)), a i = a j

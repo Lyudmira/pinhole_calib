@@ -79,9 +79,25 @@ def to_tensor_rgb(image_bgr: np.ndarray, device: str) -> torch.Tensor:
 
 
 @torch.inference_mode()
-def run_moge(model, image_bgr: np.ndarray, *, device: str, use_fp16: bool) -> dict[str, torch.Tensor]:
+def run_moge(
+    model,
+    image_bgr: np.ndarray,
+    *,
+    device: str,
+    use_fp16: bool,
+    intrinsics: PinholeIntrinsics | None = None,
+) -> dict[str, torch.Tensor]:
     tensor = to_tensor_rgb(image_bgr, device)
-    output = model.infer(tensor, use_fp16=use_fp16)
+    infer_kwargs = {"use_fp16": use_fp16}
+    if intrinsics is not None:
+        height, width = image_bgr.shape[:2]
+        infer_kwargs["intrinsics"] = intrinsics_pixels_to_normalized_tensor(
+            intrinsics,
+            width=width,
+            height=height,
+            device=device,
+        )
+    output = model.infer(tensor, **infer_kwargs)
     return {k: v.detach().float().cpu() if isinstance(v, torch.Tensor) else v for k, v in output.items()}
 
 
@@ -91,6 +107,24 @@ def normalized_intrinsics_to_pixels(intrinsics: torch.Tensor, *, width: int, hei
         focal_y=float(intrinsics[1, 1] * height),
         cx=float(intrinsics[0, 2] * width),
         cy=float(intrinsics[1, 2] * height),
+    )
+
+
+def intrinsics_pixels_to_normalized_tensor(
+    intrinsics: PinholeIntrinsics,
+    *,
+    width: int,
+    height: int,
+    device: str,
+) -> torch.Tensor:
+    return torch.tensor(
+        [
+            [float(intrinsics.focal_x) / width, 0.0, float(intrinsics.cx) / width],
+            [0.0, float(intrinsics.focal_y) / height, float(intrinsics.cy) / height],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=torch.float32,
+        device=device,
     )
 
 
@@ -227,19 +261,22 @@ def main() -> None:
     base_image_dir.mkdir(parents=True, exist_ok=True)
     shifted_image_dir.mkdir(parents=True, exist_ok=True)
 
-    baseline_outputs = []
-    shifted_outputs = []
+    base_images = []
     shifted_images = []
     recentered_images = []
 
     for path in image_paths:
         image = cv2.imread(str(path))
         cv2.imwrite(str(base_image_dir / path.name), image)
-        baseline_outputs.append(run_moge(model, image, device=args.device, use_fp16=args.use_fp16))
-        shifted = shift_image_principal_point(image, delta_cx=delta_cx, delta_cy=delta_cy)
+        base_images.append(image)
+        # ``shift_image_principal_point`` applies the inverse image warp needed
+        # to move the camera principal point by ``-delta``.  The experiment's
+        # ``delta_cx/delta_cy`` are the synthetic intrinsic offsets, so pass the
+        # opposite sign to keep image formation and shifted COLMAP observations
+        # in the same camera convention.
+        shifted = shift_image_principal_point(image, delta_cx=-delta_cx, delta_cy=-delta_cy)
         cv2.imwrite(str(shifted_image_dir / path.name), shifted)
         shifted_images.append(shifted)
-        shifted_outputs.append(run_moge(model, shifted, device=args.device, use_fp16=args.use_fp16))
 
     colmap = ColmapSharedIntrinsicEstimator(colmap_binary=COLMAP_BINARY)
     base_estimate = colmap.fit(
@@ -308,6 +345,27 @@ def main() -> None:
         else ("corrected" if prior_state.state == "debiased" else "filtered")
     )
 
+    baseline_outputs = [
+        run_moge(
+            model,
+            image,
+            device=args.device,
+            use_fp16=args.use_fp16,
+            intrinsics=base_shared,
+        )
+        for image in base_images
+    ]
+    shifted_outputs = [
+        run_moge(
+            model,
+            shifted,
+            device=args.device,
+            use_fp16=args.use_fp16,
+            intrinsics=estimated,
+        )
+        for shifted in shifted_images
+    ]
+
     rerun_outputs = []
     for shifted in shifted_images:
         recentered = recenter_image_from_estimated_intrinsics(
@@ -322,7 +380,15 @@ def main() -> None:
             target_focal_y=base_shared.focal_y,
         )
         recentered_images.append(recentered)
-        rerun_outputs.append(run_moge(model, recentered, device=args.device, use_fp16=args.use_fp16))
+        rerun_outputs.append(
+            run_moge(
+                model,
+                recentered,
+                device=args.device,
+                use_fp16=args.use_fp16,
+                intrinsics=base_shared,
+            )
+        )
 
     frame_metrics: list[FrameMetrics] = []
     for path, baseline, shifted_out, rerun_out in zip(image_paths, baseline_outputs, shifted_outputs, rerun_outputs):
@@ -476,6 +542,7 @@ def main() -> None:
         "true_shifted_intrinsics": asdict(true_shifted),
         "estimated_shifted_intrinsics": asdict(estimated),
         "base_colmap_camera": asdict(base_estimate.intrinsics),
+        "moge_intrinsics_injected": True,
         "stage_a_solver": {
             "type": "base_colmap_plus_separable_shared_intrinsics",
             "num_observations": separable.num_observations,

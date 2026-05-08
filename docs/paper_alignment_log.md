@@ -153,6 +153,101 @@ Interpretation:
   - `prior_state.state = "debiased"`
   - `rerun_recommended = false`
 
+Superseded by Phase 6:
+
+- This interpretation was based on a flawed synthetic-image sign convention and an overly conservative rerun classifier.
+- Keep the run as historical evidence, not as a current conclusion about the paper.
+
+## Phase 6: Fix synthetic principal-point sign and rerun classification
+
+Implemented:
+
+- Fixed `run_courtroom_stage_ab.py` so the synthetic shifted image and shifted COLMAP observations represent the same camera:
+  - `shift_image_principal_point(image, delta)` applies the inverse image warp for principal point `-delta`.
+  - The experiment now passes `-delta_cx, -delta_cy` when synthesizing images whose physical camera is `base + delta`.
+- Added a regression test in `python/tests/test_image_ops.py`.
+- Changed `PriorStateAssessment` classification so a large but reliably estimated intrinsics mismatch recommends recenter-and-rerun when rerun is available.
+- Changed high Schur condition to block raw/debiased response use, not the safer recenter-and-rerun path.
+
+Why:
+
+- The old setup compared MoGe outputs from an image shifted one way against geometry shifted the other way.
+- The old classifier treated large principal-point correction as a reason not to rerun, but the paper's safest path is exactly to rerun once `K` is reliable.
+
+Verification:
+
+- `24` tests passed.
+- 3-image smoke:
+  - `python/output/14/courtroom_stage_ab_smoke.json`
+  - `recommended_prior_mode = "rerun"`
+  - `rerun_point_rmse = 0.6243`
+  - `rerun_depth_mae = 0.5383`
+  - `rerun_normal_deg = 4.6794`
+- 6-image smoke:
+  - `python/output/16/courtroom_stage_ab_smoke6.json`
+  - `recommended_prior_mode = "rerun"`
+  - `rerun_point_rmse = 0.5115`
+  - `rerun_depth_mae = 0.4462`
+  - `rerun_normal_deg = 4.2867`
+
+Interpretation:
+
+- The earlier "rerun does not help" conclusion was an implementation artifact.
+- Recenter-and-rerun is now strongly supported in the smoke experiments.
+- Direct geometric correction of raw shifted MoGe outputs remains weak, which is consistent with the paper's warning that model outputs generated under the wrong camera convention are biased responses, not simple unbiased measurements.
+
+## Phase 7: Inject full intrinsics into MoGe inference
+
+Implemented outside this public repo, in the sibling MoGe checkout:
+
+- Added `intrinsics=` to `MoGeModel.infer(...)` in `/data/users/mia/current/MoGe/moge/model/v2.py`.
+- Added `recover_shift_from_rays(...)` in `/data/users/mia/current/MoGe/moge/utils/geometry_torch.py`.
+- When full normalized `K` is supplied, MoGe no longer:
+  - estimates focal length from the point map,
+  - forces `cx = cy = 0.5`,
+  - assumes centered/isometric rays in its post-processing.
+- Instead, it uses the supplied full `K` to construct per-pixel rays, recovers only the z-shift, and recomputes the point map under that `K`.
+- Updated `run_courtroom_stage_ab.py` to pass:
+  - `base_shared` for baseline images,
+  - `estimated` for shifted images,
+  - `base_shared` for recentered/rerun images.
+- Added `moge_intrinsics_injected = true` to the experiment summary.
+
+Why:
+
+- MoGe's default `infer()` post-processing always returned centered-principal-point intrinsics and self-estimated per-frame focal length.
+- That violated the paper's requirement that foundation-model priors enter under an explicit camera convention.
+- External image recentering alone was not enough; the FM post-processing also had to obey the supplied camera model.
+
+Verification:
+
+- MoGe files compile with `py_compile`.
+- Synthetic ray/shift check recovered a known z-shift with error about `6e-8`.
+- `24` public repo tests passed.
+- A direct check confirmed MoGe now returns the injected pixel intrinsics exactly in the wrapper.
+- 3-image intrinsics-injected smoke:
+  - `python/output/17/courtroom_stage_ab_intrinsics.json`
+  - `recommended_prior_mode = "rerun"`
+  - `rerun_point_rmse = 0.2601`
+  - `rerun_depth_mae = 0.1222`
+  - `rerun_normal_deg = 4.6794`
+- 6-image intrinsics-injected smoke:
+  - `python/output/18/courtroom_stage_ab_intrinsics6.json`
+  - `recommended_prior_mode = "rerun"`
+  - `rerun_point_rmse = 0.3508`
+  - `rerun_depth_mae = 0.1983`
+  - `rerun_normal_deg = 4.2780`
+
+Interpretation:
+
+- This is the closest current implementation to the paper's safe path:
+  1. estimate reliable shared `K`,
+  2. recenter images to the target camera,
+  3. run the foundation model with the target full intrinsics injected,
+  4. use the resulting outputs as corrected priors.
+- The large gain from Phase 6 to Phase 7, especially in point/depth metrics, shows that MoGe's post-processing camera convention was a real blocker.
+- Direct correction of raw shifted MoGe outputs is still not competitive with rerun, so it should remain weak/gated unless a model-specific response calibration is added.
+
 ## Tests Run
 
 Repeated after each chunk:
@@ -161,7 +256,7 @@ Repeated after each chunk:
 
 Observed status at the end of this log:
 
-- `23 tests`
+- `24 tests`
 - `OK`
 
 ## Current State
@@ -173,6 +268,9 @@ What is now implemented and behaving sensibly:
 - deterministic scalar gating with unitless intrinsics error
 - shared-K BA response/probe utilities
 - per-channel geometry residuals and gates for `pointmap/depth/normals`
+- synthetic principal-point image generation with the correct sign convention
+- safe rerun recommendation when `K` is reliable
+- MoGe v2 inference post-processing with injected full normalized intrinsics in the sibling MoGe checkout
 - non-overwriting numbered `stage_ab` work dirs and output dirs
 - experiment summaries that record the recommended prior mode
 
@@ -182,18 +280,20 @@ What is still **not** done, relative to `论文.md`:
 - using BA Schur response inside an actual joint optimizer, rather than only as a probe
 - a real estimated source for per-frame depth affine `(a_t, b_t)` inside the optimization loop
 - pose-prior correction driven by real FM pose outputs in `stage_ab`
-- a true "corrected vs filtered vs rerun" optimization schedule, instead of only summary-time recommendation
+- a true joint "corrected vs filtered vs rerun" optimization schedule beyond summary-time recommendation and the Stage A/B smoke path
 
 ## Recommended Next Order
 
 If continuing from here, the next steps should be:
 
-1. Build a real joint optimization core that keeps the reliable separable `K` initialization but adds corrected FM prior residuals as weak terms instead of swapping in BA outputs directly.
-2. Feed Schur response matrices from the local BA linearization into pose-prior correction where pose FM outputs are available.
-3. Estimate or optimize depth affine parameters `(a_t, b_t)` from geometry-consistent signals instead of keeping them as an API-only capability.
-4. Turn `recommended_prior_mode` from a reporting label into an actual optimization schedule.
+1. Treat recenter-and-rerun with injected full MoGe intrinsics as the primary prior path.
+2. Preserve direct raw-output correction only as a weak/gated fallback unless MoGe-specific response calibration proves it reliable.
+3. Build a real joint optimization core that keeps the reliable separable `K` initialization but adds corrected FM prior residuals as weak terms.
+4. Feed Schur response matrices from the local BA linearization into pose-prior correction where pose FM outputs are available.
+5. Estimate or optimize depth affine parameters `(a_t, b_t)` from geometry-consistent signals instead of keeping them as an API-only capability.
+6. Turn `recommended_prior_mode` from a reporting label into an actual optimization schedule.
 
 The key lesson so far:
 
 - "more BA" is not automatically "more paper-aligned".
-- The paper's promise comes from the **right** joint objective and response-aware prior handling, not from replacing a trustworthy calibration estimate with an underconstrained BA refinement.
+- The paper's promise comes from the **right** camera convention, joint objective, and response-aware prior handling, not from replacing a trustworthy calibration estimate with an underconstrained BA refinement.

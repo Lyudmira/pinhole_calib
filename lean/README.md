@@ -33,6 +33,24 @@ constant-depth/rotation-fixed model and approximate when depths are close, while
 the free rotation+translation nondegenerate BA model selects pure rotation as
 the unique zero-residual solution.
 
+Additional modules extend the formalization:
+
+- `PinholeCalib/SingleView.lean`: 3D affine-chart reprojection existence with
+  arbitrary positive depth scaling.
+- `PinholeCalib/JointChannels.lean`: coupled `(x, y)` objective and explicit
+  roll-zero theorem in the diagonal near-axis model.
+- `PinholeCalib/HxMatrix.lean`: explicit `2 x 2` Hessian block, determinant,
+  variance, and finite-point rank criterion.
+- `PinholeCalib/Normals.lean`: pure-shear normal transport and the skew-part
+  `1 / 2` coefficient.
+- `PinholeCalib/AffineFusion.lean`: affine fusion commutation and the discrete
+  variable-weight finite-difference term.
+
+Archival logs for this formalization pass are stored in `logs/`:
+
+- `logs/build.log`: clean rebuild of the Lean package.
+- `logs/*.inventory.log`: theorem/definition inventory for each new module.
+
 I installed a local Elan toolchain in this directory under `.elan/`. To check
 with that local toolchain:
 

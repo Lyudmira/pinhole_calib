@@ -690,18 +690,19 @@ class MiscalibrationPriorAdapter:
             float("inf") if schur_condition_number is None else float(schur_condition_number)
         )
 
-        if (
-            intrinsics_error >= config.filtered_intrinsics_error_max
-            or principal_point_std_px >= config.filtered_principal_point_std_px_max
-            or schur_condition_number >= config.filtered_schur_condition_max
-        ):
+        intrinsics_uncertain = principal_point_std_px >= config.filtered_principal_point_std_px_max
+        if intrinsics_uncertain:
             state: t.Literal["corrected", "debiased", "filtered"] = "filtered"
         elif (
             rerun_available
-            and intrinsics_error <= config.corrected_intrinsics_error_max
             and principal_point_std_px <= config.corrected_principal_point_std_px_max
         ):
             state = "corrected"
+        elif (
+            intrinsics_error >= config.filtered_intrinsics_error_max
+            or schur_condition_number >= config.filtered_schur_condition_max
+        ):
+            state = "filtered"
         else:
             state = "debiased"
 

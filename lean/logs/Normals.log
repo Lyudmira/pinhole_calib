@@ -1,0 +1,106 @@
++ ELAN_HOME=/data/users/mia/current/pinhole_calib/lean/.elan
++ PATH=/data/users/mia/current/pinhole_calib/lean/.elan/bin:/usr/local/cuda/bin:/data/users/mia/bin:/usr/local/cuda/bin:/data/users/mia/bin:/data/users/mia/.codex/tmp/arg0/codex-arg0HMvgeR:/data/users/mia/.vscode-server-insiders/cli/servers/Insiders-43d0ed45492da1b1ca1738893956de429d46b5e8/server/bin/remote-cli:/usr/local/cuda/bin:/data/users/mia/bin:/usr/local/cuda/bin:/data/users/mia/.conda/bin:/usr/local/cuda/bin:/data/users/mia/.mamba/condabin:/data/users/mia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/data/users/mia/.local/share/JetBrains/Toolbox/scripts:/data/users/mia/.vscode-server-insiders/extensions/openai.chatgpt-26.506.20924-linux-x64/bin/linux-x86_64:/data/users/mia/.local/share/JetBrains/Toolbox/scripts
++ lake env lean PinholeCalib/Normals.lean
+Try this: ring_nf
+PinholeCalib/Normals.lean:32:24: error: unsolved goals
+βx βy : R
+n p : Vec3
+⊢ Matrix.vecHead n * Matrix.vecHead p +
+        Matrix.vecHead (Matrix.vecTail (Matrix.vecTail p)) * Matrix.vecHead (Matrix.vecTail (Matrix.vecTail n)) +
+      Matrix.vecHead (Matrix.vecTail n) * Matrix.vecHead (Matrix.vecTail p) =
+    n 0 * p 0 + n 1 * p 1 + n 2 * p 2
+PinholeCalib/Normals.lean:37:45: error: expected token
+Try this: ring_nf
+Try this: ring_nf
+Try this: ring_nf
+Try this: ring_nf
+Try this: ring_nf
+Try this: ring_nf
+Try this: ring_nf
+Try this: ring_nf
+Try this: ring_nf
+PinholeCalib/Normals.lean:53:32: error: unsolved goals
+case a.«_@».Mathlib.Data.Matrix.Defs._hyg.177.«0».«0»
+βx βy : R
+⊢ 1 -
+      Matrix.vecHead
+        (Matrix.vecHead fun i => Matrix.vecCons (![1, 0, βx] i) (Matrix.transpose ![![0, 1, βy], ![0, 0, 1]] i)) =
+    0
+
+case a.«_@».Mathlib.Data.Matrix.Defs._hyg.177.«0».«1»
+βx βy : R
+⊢ Matrix.vecHead
+      (Matrix.vecTail
+        (Matrix.vecHead fun i => Matrix.vecCons (![1, 0, βx] i) (Matrix.transpose ![![0, 1, βy], ![0, 0, 1]] i))) =
+    0
+
+case a.«_@».Mathlib.Data.Matrix.Defs._hyg.177.«0».«2»
+βx βy : R
+⊢ βx * (1 / 2) +
+      Matrix.vecHead
+          (Matrix.vecTail
+            (Matrix.vecTail
+              (Matrix.vecHead fun i =>
+                Matrix.vecCons (![1, 0, βx] i) (Matrix.transpose ![![0, 1, βy], ![0, 0, 1]] i)))) *
+        (-1 / 2) =
+    βx * (1 / 2)
+
+case a.«_@».Mathlib.Data.Matrix.Defs._hyg.177.«1».«0»
+βx βy : R
+⊢ Matrix.vecHead
+      (Matrix.vecHead
+        (Matrix.vecTail fun i => Matrix.vecCons (![1, 0, βx] i) (Matrix.transpose ![![0, 1, βy], ![0, 0, 1]] i))) =
+    0
+
+case a.«_@».Mathlib.Data.Matrix.Defs._hyg.177.«1».«1»
+βx βy : R
+⊢ 1 -
+      Matrix.vecHead
+        (Matrix.vecTail
+          (Matrix.vecHead
+            (Matrix.vecTail fun i => Matrix.vecCons (![1, 0, βx] i) (Matrix.transpose ![![0, 1, βy], ![0, 0, 1]] i)))) =
+    0
+
+case a.«_@».Mathlib.Data.Matrix.Defs._hyg.177.«1».«2»
+βx βy : R
+⊢ βy * (1 / 2) +
+      Matrix.vecHead
+          (Matrix.vecTail
+            (Matrix.vecTail
+              (Matrix.vecHead
+                (Matrix.vecTail fun i =>
+                  Matrix.vecCons (![1, 0, βx] i) (Matrix.transpose ![![0, 1, βy], ![0, 0, 1]] i))))) *
+        (-1 / 2) =
+    βy * (1 / 2)
+
+case a.«_@».Mathlib.Data.Matrix.Defs._hyg.177.«2».«0»
+βx βy : R
+⊢ Matrix.vecHead
+        (Matrix.vecHead
+          (Matrix.vecTail
+            (Matrix.vecTail fun i => Matrix.vecCons (![1, 0, βx] i) (Matrix.transpose ![![0, 1, βy], ![0, 0, 1]] i)))) *
+      (-1 / 2) =
+    βx * (-1 / 2)
+
+case a.«_@».Mathlib.Data.Matrix.Defs._hyg.177.«2».«1»
+βx βy : R
+⊢ Matrix.vecHead
+        (Matrix.vecTail
+          (Matrix.vecHead
+            (Matrix.vecTail
+              (Matrix.vecTail fun i =>
+                Matrix.vecCons (![1, 0, βx] i) (Matrix.transpose ![![0, 1, βy], ![0, 0, 1]] i))))) *
+      (-1 / 2) =
+    βy * (-1 / 2)
+
+case a.«_@».Mathlib.Data.Matrix.Defs._hyg.177.«2».«2»
+βx βy : R
+⊢ 1 -
+      Matrix.vecHead
+        (Matrix.vecTail
+          (Matrix.vecTail
+            (Matrix.vecHead
+              (Matrix.vecTail
+                (Matrix.vecTail fun i =>
+                  Matrix.vecCons (![1, 0, βx] i) (Matrix.transpose ![![0, 1, βy], ![0, 0, 1]] i)))))) =
+    0

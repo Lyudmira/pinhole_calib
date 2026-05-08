@@ -1,0 +1,5 @@
+12:def blend (w : R) (p q : Vec3) : Vec3 :=
+15:theorem linearMap_sum_smul
+24:theorem linearMap_blend
+31:theorem finiteDifference_blend
+42:theorem finiteDifference_blend_after_linearMap

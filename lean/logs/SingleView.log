@@ -1,0 +1,21 @@
++ ELAN_HOME=/data/users/mia/current/pinhole_calib/lean/.elan
++ PATH=/data/users/mia/current/pinhole_calib/lean/.elan/bin:/usr/local/cuda/bin:/data/users/mia/bin:/usr/local/cuda/bin:/data/users/mia/bin:/data/users/mia/.codex/tmp/arg0/codex-arg0HMvgeR:/data/users/mia/.vscode-server-insiders/cli/servers/Insiders-43d0ed45492da1b1ca1738893956de429d46b5e8/server/bin/remote-cli:/usr/local/cuda/bin:/data/users/mia/bin:/usr/local/cuda/bin:/data/users/mia/.conda/bin:/usr/local/cuda/bin:/data/users/mia/.mamba/condabin:/data/users/mia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/data/users/mia/.local/share/JetBrains/Toolbox/scripts:/data/users/mia/.vscode-server-insiders/extensions/openai.chatgpt-26.506.20924-linux-x64/bin/linux-x86_64:/data/users/mia/.local/share/JetBrains/Toolbox/scripts
++ lake env lean PinholeCalib/SingleView.lean
+PinholeCalib/SingleView.lean:23:53: error: unsolved goals
+αx αy βx βy : R
+p : Vec3
+⊢ Matrix.vecHead (Matrix.vecTail (Matrix.vecTail p)) = p 2
+Try this: ring_nf
+PinholeCalib/SingleView.lean:29:2: error: unsolved goals
+case h.«0»
+ρ : R
+hρ : ρ ≠ 0
+p : Vec3
+⊢ ρ * p 0 * ρ⁻¹ * (p 2)⁻¹ = p 0 * (p 2)⁻¹
+Try this: ring_nf
+PinholeCalib/SingleView.lean:32:2: error: unsolved goals
+case h.«1»
+ρ : R
+hρ : ρ ≠ 0
+p : Vec3
+⊢ ρ * p 1 * ρ⁻¹ * (p 2)⁻¹ = p 1 * (p 2)⁻¹

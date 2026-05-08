@@ -228,6 +228,44 @@ class PriorAdapterTest(unittest.TestCase):
         )
         self.assertEqual(debiased.state, "debiased")
 
+        large_but_stable = self.adapter.classify_prior_state(
+            current_intrinsics=PinholeIntrinsics(400.0, 420.0, 390.0, 180.0),
+            principal_point_std_px=1.0,
+            principal_point_rotation_sensitivity=1e-3,
+            schur_condition_number=1e4,
+            rerun_available=True,
+        )
+        self.assertEqual(large_but_stable.state, "corrected")
+        self.assertTrue(large_but_stable.rerun_recommended)
+
+        large_without_rerun = self.adapter.classify_prior_state(
+            current_intrinsics=PinholeIntrinsics(400.0, 420.0, 390.0, 180.0),
+            principal_point_std_px=1.0,
+            principal_point_rotation_sensitivity=1e-3,
+            schur_condition_number=1e4,
+            rerun_available=False,
+        )
+        self.assertEqual(large_without_rerun.state, "filtered")
+
+        high_schur_but_rerunnable = self.adapter.classify_prior_state(
+            current_intrinsics=self.current,
+            principal_point_std_px=1.0,
+            principal_point_rotation_sensitivity=1e-3,
+            schur_condition_number=1e16,
+            rerun_available=True,
+        )
+        self.assertEqual(high_schur_but_rerunnable.state, "corrected")
+        self.assertTrue(high_schur_but_rerunnable.rerun_recommended)
+
+        high_schur_without_rerun = self.adapter.classify_prior_state(
+            current_intrinsics=self.current,
+            principal_point_std_px=1.0,
+            principal_point_rotation_sensitivity=1e-3,
+            schur_condition_number=1e16,
+            rerun_available=False,
+        )
+        self.assertEqual(high_schur_without_rerun.state, "filtered")
+
     def test_depth_affine_fit_and_application(self) -> None:
         source = torch.tensor(
             [[1.0, 2.0], [3.0, 4.0]],

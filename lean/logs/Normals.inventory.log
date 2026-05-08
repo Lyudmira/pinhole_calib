@@ -1,0 +1,7 @@
+10:def pureShear (βx βy : R) : Matrix (Fin 3) (Fin 3) R :=
+15:def pureShearInvT (βx βy : R) : Matrix (Fin 3) (Fin 3) R :=
+20:def shearError (βx βy : R) : Matrix (Fin 3) (Fin 3) R :=
+23:def skewPart (M : Matrix (Fin 3) (Fin 3) R) :
+27:def planeValue (n p : Vec3) : R :=
+30:theorem pureShear_plane_invariant (βx βy : R) (n p : Vec3) :
+36:theorem shearError_skewPart (βx βy : R) :

@@ -1,0 +1,4 @@
+9:def jointObjective2
+13:def jointObjective2WithRoll
+23:theorem jointObjective2_eq_zero_iff
+44:theorem jointObjective2WithRoll_eq_zero_iff
